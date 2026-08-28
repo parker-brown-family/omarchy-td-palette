@@ -40,8 +40,8 @@ BarWidget {
 
   Process {
     id: runner
-    stdout: StdioCollector {}
-    stderr: StdioCollector {}
+    stdout: StdioCollector { id: outText }
+    stderr: StdioCollector { id: errText }
     // The signature is verified against quickshell-io.qmltypes: exited(int,
     // QProcess::ExitStatus). The second type is a C++ enum with no QML
     // registration, so the linter cannot resolve it — that is the linter's
@@ -51,10 +51,34 @@ BarWidget {
       if (exitCode !== 0) {
         root.missing = true
         unmiss.restart()
+        // the collectors finish a beat after the exit — read them then
+        explainDelay.restart()
       }
     }
     // qmllint enable signal-handler-parameters
   }
+
+  // A blink says "no"; a notification says WHY. The ctl client already writes
+  // the actionable diagnosis — "no control socket (older build — reopen this
+  // terminal)", "no terminal-delight windows on workspace N" — so the widget
+  // carries that voice to the notification daemon instead of inventing its
+  // own. Transient (-e): a failed click is a moment, not an inbox item.
+  function explain() {
+    var why = (errText.text || outText.text || "").trim().split("\n")[0]
+    if (why.indexOf("\t") !== -1) why = why.split("\t")[1] || why
+    why = why.replace(/^err /, "")
+    if (!why) why = "No paintable terminals answered on this workspace."
+    shout.command = ["notify-send", "-a", "Terminal Paint", "-e", "Nothing to paint", why]
+    shout.running = true
+  }
+
+  Timer {
+    id: explainDelay
+    interval: 120
+    onTriggered: root.explain()
+  }
+
+  Process { id: shout }
 
   // One-shot feedback reset — not a poll; it only ever runs after a miss.
   Timer {

@@ -13,8 +13,11 @@ persists across restarts — it lands in the terminal's own per-pane state.
 Plugins are unsandboxed, so here is the whole footprint:
 
 - **Runs:** `terminal-delight ctl paint <on|off|toggle> [--all]` — one
-  short-lived process per click, nothing resident, no timers except a one-shot
-  1.6 s feedback reset after a failed call.
+  short-lived process per click, nothing resident, no timers except two
+  one-shots after a failed call (the 1.6 s face reset and a 120 ms collector
+  wait). On failure it also runs `notify-send` once, carrying the ctl client's
+  own diagnosis (e.g. "no control socket — reopen this terminal") as a
+  transient notification.
 - **Reads:** nothing. **Writes:** nothing. **Network:** none, ever.
 - The overlay itself is rendered by terminal-delight inside its own windows
   (Wayland does not let one client paint into another). The terminal's `ctl`
