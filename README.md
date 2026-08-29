@@ -52,20 +52,33 @@ Plugins are unsandboxed, so here is the whole footprint:
 
 ## Keyboard
 
+Summon it from a chord (this exact line is what we run):
+
 ```lua
 -- ~/.config/hypr/bindings.lua
-o.bind("SUPER SHIFT", "P", function()
-  hl.dsp.exec_cmd("omarchy-shell -q shell toggle brownfamilysports.td-palette")
-end)
+o.bind("SUPER + ALT + P", "Paint terminals",
+  "omarchy-shell shell toggle brownfamilysports.td-palette")
 ```
+
+Pick any free chord — `omarchy menu keybindings --print` lists what's taken.
+
+While the overlay is up it plays entirely from the keyboard:
+
+| Key | Means |
+|---|---|
+| ← → ↑ ↓ / Tab | walk the tiles in reading order |
+| first letter | paint the selected tile — every variant owns its own letter |
+| d | hand the selected tile back to the desktop theme |
+| s | toggle SATURATE on the selected tile |
+| S | toggle SATURATE ALL |
+| R | reset every tile to defaults |
+| ⏎ | Terminal Delight's own pane picker |
+| Esc | done — brushes away everywhere |
 
 ## Install
 
 ```bash
 omarchy plugin add https://github.com/parker-brown-family/omarchy-td-palette.git --enable
 ```
-
-(Until graduation this plugin lives in the lab's incubator and is dev-linked;
-the URL above goes live when it ships.)
 
 MIT.
