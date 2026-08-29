@@ -377,6 +377,33 @@ BarWidget {
               }
             }
 
+            // SATURATE — the overflowing paint can: crank this tile's text
+            // colour to the Terminal Delight look, click again to pour it
+            // back. Stateless chip by design; td-tint's record carries the
+            // truth and --sync re-applies it.
+            Rectangle {
+              visible: !model.td
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: satLabel.implicitWidth + Style.space(24)
+              height: Style.space(30)
+              radius: Style.cornerRadius
+              color: "transparent"
+              border.color: Color.menu.border
+              border.width: 1
+              Text {
+                id: satLabel
+                anchors.centerIn: parent
+                text: "🫗  SATURATE"
+                color: Color.menu.text
+                font.family: Style.font.menuFamily
+                font.pixelSize: Style.font.caption
+              }
+              MouseArea {
+                anchors.fill: parent
+                onClicked: Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
+              }
+            }
+
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
               text: "esc · done"
