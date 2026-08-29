@@ -54,10 +54,24 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  // One summon, one document. The run token is what makes delivery
+  // idempotent: whichever of the two signals below arrives first wins, and
+  // the other becomes a no-op instead of a second overlay.
+  property int snapRun: 0
+  property int snapTaken: -1
+
   function paintOpen() {
     console.log("td-paint: open — snapshotting")
+    root.snapRun++
     snapshot.running = false
     snapshot.running = true
+  }
+
+  function consumeOnce(raw) {
+    if (root.snapTaken === root.snapRun) return
+    root.snapTaken = root.snapRun
+    snapWatchdog.stop()
+    root.consume(raw)
   }
 
   // keepTd: a handoff card just raised Terminal Delight's own picker — leave
@@ -227,13 +241,34 @@ BarWidget {
     id: snapshot
     command: ["td-tint", "--state"]
     // Gated on the collector draining, not on a clock. `waitForEnd` holds the
-    // read until stdout actually closes and `streamFinished` says when — a
-    // fixed timer would truncate the document on a slow pipe and idle on a
+    // buffer until stdout actually closes and `streamFinished` says when. The
+    // old fixed 120 ms wait was the only gate, and it was wrong in both
+    // directions — it truncates the document on a slow pipe and idles on a
     // fast one, and neither failure announces itself.
     stdout: StdioCollector {
       id: snapText
       waitForEnd: true
-      onStreamFinished: root.consume(snapText.text)
+      onStreamFinished: root.consumeOnce(snapText.text)
+    }
+    // Exit is deliberately NOT the read signal: with waitForEnd the buffer can
+    // still be filling here, which is the truncation the timer used to cause.
+    // It only arms a watchdog, so a process that ends without the stream
+    // closing cleanly still surfaces something rather than hanging the summon.
+    // qmllint disable signal-handler-parameters
+    onExited: function (exitCode, exitStatus) {
+      snapWatchdog.restart()
+    }
+    // qmllint enable signal-handler-parameters
+  }
+
+  // Liveness only, never the happy path — an order of magnitude past the old
+  // wait, and cancelled the moment the drain signal lands.
+  Timer {
+    id: snapWatchdog
+    interval: 2000
+    onTriggered: {
+      console.log("td-paint: stream never closed — reading the watchdog buffer")
+      root.consumeOnce(snapText.text)
     }
   }
 
