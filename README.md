@@ -22,16 +22,39 @@ brushes away everywhere.
 
 Plugins are unsandboxed, so here is the whole footprint:
 
-- **Runs, on summon:** one `bash -c` snapshot — `td-tint --json` (the installed
-  variant list) plus `hyprctl -j activeworkspace / clients / monitors` (where
-  the terminal tiles are). **Runs, on a card click:** `td-tint --window …` or
-  `terminal-delight ctl paint …`. **Runs, on an empty workspace:** one
-  transient `notify-send` saying so. Nothing resident, nothing polled; the only
-  timer is a one-shot 120 ms collector wait after the snapshot.
+- **Runs, on summon:** one command — `td-tint --state`, the oracle that reports
+  the installed variant list and where the terminal tiles are. **Runs, on a card
+  click:** `td-tint --window …` or `terminal-delight ctl paint …`. **Runs, on an
+  empty workspace:** one transient `notify-send` saying so. Nothing resident,
+  nothing polled.
+- **Every one of those is an argv array.** No `bash -c`, no shell string, no
+  string-form `execDetached` anywhere in the file — there is no place for a
+  word to be re-split or re-interpreted on its way to a process.
 - **Reads:** nothing beyond those command outputs. **Writes:** nothing.
   **Network:** none, ever.
 - While the overlay is up it holds exclusive keyboard focus (that is what
   makes Esc work); it releases everything on dismiss.
+
+### What it trusts, and what it checks
+
+The variant set is not ours. Keys, glyphs and colours are authored in whatever
+theme repository installed them ([variants.toml](https://github.com/parker-brown-family/omarchy-terminal-delight-theme/blob/main/variants.toml)
+→ `install-variants.sh`) and reach this plugin over a pipe, so `--state` output
+is treated as third-party input and normalised at one boundary before anything
+downstream sees it:
+
+| Field | Accepted | Why it matters |
+|---|---|---|
+| `key` | `^[a-z0-9][a-z0-9-]{0,31}$` | it is the card label, the keyboard letter **and** an argv word — so it may carry no markup, and may never begin with `-` |
+| `glyph` | plain text, ≤ 8 chars | drawn as `Text.PlainText`; never sniffed, never interpreted |
+| `accent`, `partner` | `#rgb` / `#rrggbb` / `#aarrggbb` | they land in a string→color coercion |
+| window address | `^0x[0-9a-f]{1,16}$` | it is the argv word behind `--window`, and a filename inside `td-tint`'s run dir |
+
+A record that does not fit is dropped, not repaired. Card labels are built from
+plain `Text` items with font properties — the draw path never assembles markup,
+so there is nothing for a hostile name to be rendered as. The snapshot read is
+gated on the collector draining rather than on a timer, and a document past
+256 KiB is discarded unparsed.
 
 ## Requirements
 

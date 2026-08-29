@@ -226,25 +226,75 @@ BarWidget {
   Process {
     id: snapshot
     command: ["td-tint", "--state"]
-    stdout: StdioCollector { id: snapText }
-    // Verified against quickshell-io.qmltypes: exited(int, QProcess::ExitStatus).
-    // The enum has no QML registration — linter blind spot, not a wrong handler.
-    // qmllint disable signal-handler-parameters
-    onExited: function (exitCode, exitStatus) {
-      collectDelay.restart()
+    // Gated on the collector draining, not on a clock. `waitForEnd` holds the
+    // read until stdout actually closes and `streamFinished` says when — a
+    // fixed timer would truncate the document on a slow pipe and idle on a
+    // fast one, and neither failure announces itself.
+    stdout: StdioCollector {
+      id: snapText
+      waitForEnd: true
+      onStreamFinished: root.consume(snapText.text)
     }
-    // qmllint enable signal-handler-parameters
   }
 
-  // The collectors drain a beat after the exit signal — read them then.
-  Timer {
-    id: collectDelay
-    interval: 120
-    onTriggered: root.consume(snapText.text)
+  // The trust boundary, and the reason the rest of this file can be read as
+  // if the oracle were honest. `td-tint --state` reports a variant set this
+  // plugin does not author: the keys, glyphs and colours are written in
+  // whatever theme repository installed them (`variants.toml` →
+  // `install-variants.sh`) and arrive here over a pipe. Every label drawn
+  // below, every tile colour, and every argv word handed to `td-tint` is built
+  // from that list — so the list is normalised HERE, once, and a record that
+  // does not fit the shape is dropped rather than repaired.
+  //
+  //   key      the identity AND the argv word AND the keyboard letter. Lower
+  //            alphanumeric with inner dashes, never leading `-`: it can carry
+  //            no markup, and it can never be read by td-tint as a flag.
+  //   glyph    one short display grapheme, drawn as plain text.
+  //   colours  #rgb / #rrggbb / #aarrggbb only — anything else lands in a
+  //            string→color coercion whose failure modes are not ours.
+  readonly property var keyRe: /^[a-z0-9][a-z0-9-]{0,31}$/
+  readonly property var hexRe: /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
+  // Hyprland window handles, the argv word behind `--window` and (inside
+  // td-tint) a filename under its run dir. Anchored so no separator, no
+  // traversal and no leading dash can reach either.
+  readonly property var addrRe: /^0x[0-9a-fA-F]{1,16}$/
+
+  function sanitizeVariants(list) {
+    if (!Array.isArray(list)) return []
+    var out = []
+    for (var i = 0; i < list.length && out.length < 64; i++) {
+      var v = list[i]
+      if (!v || typeof v.key !== "string" || !root.keyRe.test(v.key)) continue
+      if (typeof v.accent !== "string" || !root.hexRe.test(v.accent)) continue
+      if (typeof v.partner !== "string" || !root.hexRe.test(v.partner)) continue
+      out.push({
+        key: v.key,
+        glyph: typeof v.glyph === "string" ? v.glyph.slice(0, 8) : "",
+        accent: v.accent,
+        partner: v.partner
+      })
+    }
+    var dropped = list.length - out.length
+    if (dropped > 0) console.log("td-paint: dropped " + dropped + " malformed variant record(s)")
+    return out
   }
+
+  // A window we will not aim a command at is a window we will not draw a card
+  // over — the guard is one predicate so the two can never disagree.
+  function validAddr(a) { return typeof a === "string" && root.addrRe.test(a) }
+
+  // The document is a few kilobytes for a busy workspace. Past this ceiling it
+  // is not a state document, and it is dropped instead of parsed.
+  readonly property int stateLimit: 262144
 
   function consume(raw) {
     var st
+    if (typeof raw !== "string" || raw.length === 0) return
+    if (raw.length > root.stateLimit) {
+      console.log("td-paint: state of " + raw.length + " bytes exceeds the "
+                  + root.stateLimit + "-byte ceiling — dropped unparsed")
+      return
+    }
     try {
       st = JSON.parse(raw)
     } catch (e) {
@@ -263,6 +313,7 @@ BarWidget {
     var anyTd = false
     st.tiles.forEach(function (t) {
       if (!t.on_active_workspace) return
+      if (!root.validAddr(t.address)) return
       if (t.terminal_delight) anyTd = true
       else oscCount++
       tiles.push({
@@ -286,7 +337,7 @@ BarWidget {
       if (tiles[t].address === focusAddr) root.sel = t
     }
     root.refreshAllSat()
-    root.variants = st.variants || []
+    root.variants = root.sanitizeVariants(st.variants)
 
     if (oscCount === 0 && anyTd) {
       // A pure Terminal Delight workspace needs no layer at all — hand the
@@ -567,21 +618,41 @@ BarWidget {
                     spacing: Style.space(2)
                     Text {
                       anchors.horizontalCenter: parent.horizontalCenter
+                      // stated, not inferred: AutoText would sniff this string
+                      // and the string is not ours to trust
+                      textFormat: Text.PlainText
                       text: modelData.glyph
                       font.pixelSize: Style.font.heading
                     }
-                    Text {
+                    // Press the FIRST LETTER to paint, so the first letter is
+                    // the loud one: bold, underlined, four points up. Two plain
+                    // Text items rather than one rich one — the label is built
+                    // from a name written in another repository, and a draw
+                    // path that never assembles markup cannot be made to render
+                    // any. The typography is identical; only the mechanism moved
+                    // from a string of HTML to the font properties themselves.
+                    Row {
                       anchors.horizontalCenter: parent.horizontalCenter
-                      // press the FIRST LETTER to paint — so the first letter
-                      // is the loud one: bold, underlined, four points up
-                      textFormat: Text.RichText
-                      text: "<span style=\"font-size:" + (Style.font.caption + 4)
-                        + "px\"><b><u>" + modelData.key.charAt(0).toUpperCase()
-                        + "</u></b></span>" + modelData.key.slice(1).toUpperCase()
-                      color: Color.menu.text
-                      opacity: 0.85
-                      font.family: Style.font.menuFamily
-                      font.pixelSize: Style.font.caption
+                      Text {
+                        id: initial
+                        textFormat: Text.PlainText
+                        text: modelData.key.charAt(0).toUpperCase()
+                        color: Color.menu.text
+                        opacity: 0.85
+                        font.family: Style.font.menuFamily
+                        font.pixelSize: Style.font.caption + 4
+                        font.bold: true
+                        font.underline: true
+                      }
+                      Text {
+                        anchors.baseline: initial.baseline
+                        textFormat: Text.PlainText
+                        text: modelData.key.slice(1).toUpperCase()
+                        color: Color.menu.text
+                        opacity: 0.85
+                        font.family: Style.font.menuFamily
+                        font.pixelSize: Style.font.caption
+                      }
                     }
                     Rectangle {
                       anchors.horizontalCenter: parent.horizontalCenter
