@@ -98,6 +98,20 @@ While the overlay is up it plays entirely from the keyboard:
 | ⏎ | Terminal Delight's own pane picker |
 | Esc | done — brushes away everywhere |
 
+## The three repos
+
+| Repo | What it is |
+|---|---|
+| [**terminal-delight**](https://github.com/parker-brown-family/terminal-delight) | the terminal itself — GPU-native, Rust, tiling panes, per-pane grading |
+| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the variant set, the compositor curve, and `td-tint` |
+| [**omarchy-td-palette**](https://github.com/parker-brown-family/omarchy-td-palette) | *Terminal Paint* — this repo, the 🎨 bar widget |
+
+This one is the thinnest: a single QML file that renders what
+`td-tint --state` reports and shells out to `td-tint` to act. It authors no
+colours and holds no state. That is also why it validates everything it reads
+— the variant set is written in the theme repo, which makes it third-party
+input here.
+
 ## Install
 
 ```bash
