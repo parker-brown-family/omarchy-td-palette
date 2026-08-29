@@ -186,7 +186,7 @@ BarWidget {
     for (var i = 0; i < root.variants.length; i++) {
       var v = root.variants[i]
       if (v.key.charAt(0) === ch) {
-        Quickshell.execDetached(["td-tint", "--window", t.address, v.key])
+        Quickshell.execDetached(["td-tint", "--window", t.address, "--", v.key])
         root.markPicked(root.sel, v.key)  // SATURATE rides along: td-tint keeps it
         return
       }
@@ -700,7 +700,7 @@ BarWidget {
                   MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                      Quickshell.execDetached(["td-tint", "--window", tileAddress, modelData.key])
+                      Quickshell.execDetached(["td-tint", "--window", tileAddress, "--", modelData.key])
                       // SATURATE rides along — td-tint carries it across coats
                       root.markPicked(tileIndex, modelData.key)
                       root.sel = tileIndex
