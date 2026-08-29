@@ -81,4 +81,13 @@ While the overlay is up it plays entirely from the keyboard:
 omarchy plugin add https://github.com/parker-brown-family/omarchy-td-palette.git --enable
 ```
 
+## Remove
+
+```bash
+omarchy plugin remove brownfamilysports.td-palette --yes
+```
+
+Runtime tints die with their windows; the plugin itself writes no state and
+leaves nothing behind.
+
 MIT.
