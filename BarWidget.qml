@@ -79,13 +79,82 @@ BarWidget {
   function markPicked(i, key) { tileModel.setProperty(i, "picked", key) }
   function markSat(i, on) { tileModel.setProperty(i, "sat", on) }
 
+  // ---- keyboard-first: everything a click can do, off the home row. One
+  // selected tile (opens on the window you were just focused in); bare
+  // arrows walk reading order; a variant's FIRST LETTER paints the selected
+  // tile (the set was renamed so every letter is unique: a b c e g n p r t
+  // v w). Lowercase acts on the tile, uppercase on the workspace.
+  property int sel: 0
+  function selStep(d) {
+    var n = tileModel.count
+    if (n > 0) root.sel = ((root.sel + d) % n + n) % n
+  }
+  function applyLetter(ch) {
+    var t = tileModel.get(root.sel)
+    if (!t || t.td) return
+    for (var i = 0; i < root.variants.length; i++) {
+      var v = root.variants[i]
+      if (v.key.charAt(0) === ch) {
+        Quickshell.execDetached(["td-tint", "--window", t.address, v.key])
+        root.markPicked(root.sel, v.key)  // SATURATE rides along: td-tint keeps it
+        return
+      }
+    }
+  }
+  function clearSel() {
+    var t = tileModel.get(root.sel)
+    if (!t || t.td) return
+    Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
+    root.markPicked(root.sel, "-")
+    root.markSat(root.sel, false)
+  }
+  function satSel() {
+    var t = tileModel.get(root.sel)
+    if (!t || t.td) return
+    Quickshell.execDetached(["td-tint", "--window", t.address, "--saturate", "toggle"])
+    root.markSat(root.sel, !t.sat)
+  }
+  function tdSel() {
+    var t = tileModel.get(root.sel)
+    if (!t || !t.td) return
+    Quickshell.execDetached(["terminal-delight", "ctl", "paint", "on", "--pid", String(t.pid)])
+    root.paintDismiss(true)
+  }
+  function satAll(on) {
+    for (var i = 0; i < tileModel.count; i++) {
+      var t = tileModel.get(i)
+      if (t.td) continue
+      Quickshell.execDetached(["td-tint", "--window", t.address, "--saturate", on ? "on" : "off"])
+      root.markSat(i, on)
+    }
+  }
+  // The global toggle reads the room: any tile still dry -> crank them all;
+  // every tile already cranked -> pour them all back.
+  function satAllToggle() {
+    var anyDry = false
+    for (var i = 0; i < tileModel.count; i++) {
+      var t = tileModel.get(i)
+      if (!t.td && !t.sat) anyDry = true
+    }
+    root.satAll(anyDry)
+  }
+  function resetAll() {
+    for (var i = 0; i < tileModel.count; i++) {
+      var t = tileModel.get(i)
+      if (t.td) continue
+      Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
+      root.markPicked(i, "-")
+      root.markSat(i, false)
+    }
+  }
+
   // One process, one snapshot: the variant list and the compositor state,
   // fetched at summon time. No polling — the picker sees the workspace as it
   // was when you rang it, which is also the workspace you were looking at.
   Process {
     id: snapshot
     command: ["bash", "-c",
-      "td-tint --json; echo @@; hyprctl -j activeworkspace; echo @@; hyprctl -j clients; echo @@; hyprctl -j monitors; echo @@; for f in \"${XDG_RUNTIME_DIR:-/tmp}\"/td-tint/0x*; do [ -f \"$f\" ] && echo \"$(basename \"$f\") $(head -1 \"$f\") $(grep -cx sat=1 \"$f\")\"; done; true"]
+      "td-tint --json; echo @@; hyprctl -j activeworkspace; echo @@; hyprctl -j clients; echo @@; hyprctl -j monitors; echo @@; for f in \"${XDG_RUNTIME_DIR:-/tmp}\"/td-tint/0x*; do [ -f \"$f\" ] && echo \"$(basename \"$f\") $(head -1 \"$f\") $(grep -cx sat=1 \"$f\")\"; done; echo @@; hyprctl -j activewindow; true"]
     stdout: StdioCollector { id: snapText }
     // Verified against quickshell-io.qmltypes: exited(int, QProcess::ExitStatus).
     // The enum has no QML registration — linter blind spot, not a wrong handler.
@@ -132,13 +201,19 @@ BarWidget {
       })
     }
 
+    // where the keyboard opens: on the tile you were just working in
+    var focusAddr = ""
+    if (parts.length > 5) {
+      try { focusAddr = JSON.parse(parts[5]).address || "" } catch (e2) {}
+    }
+
     // Terminals we can reach over OSC. Terminal Delight is deliberately not
     // in this map — it has a better story (per-pane, persistent) via ctl.
     var OSC_TERMS = {
       "foot": 1, "Alacritty": 1, "kitty": 1,
       "com.mitchellh.ghostty": 1, "org.wezfurlong.wezterm": 1
     }
-    tileModel.clear()
+    var tiles = []
     var oscCount = 0
     var anyTd = false
     for (var c = 0; c < clients.length; c++) {
@@ -148,7 +223,7 @@ BarWidget {
       if (!isTd && !OSC_TERMS[w.class]) continue
       if (isTd) anyTd = true
       else oscCount++
-      tileModel.append({
+      tiles.push({
         address: w.address,
         pid: w.pid,
         td: isTd,
@@ -159,6 +234,14 @@ BarWidget {
         picked: recs[w.address] ? recs[w.address].v : "",
         sat: recs[w.address] ? recs[w.address].s : false
       })
+    }
+    // reading order — the order the bare arrows walk
+    tiles.sort(function (a, b) { return (a.ty - b.ty) || (a.tx - b.tx) })
+    tileModel.clear()
+    root.sel = 0
+    for (var t = 0; t < tiles.length; t++) {
+      tileModel.append(tiles[t])
+      if (tiles[t].address === focusAddr) root.sel = t
     }
     root.variants = vars
 
@@ -242,7 +325,24 @@ BarWidget {
         if (event.key === Qt.Key_Escape) {
           root.paintDismiss(false)
           event.accepted = true
+          return
         }
+        if (event.key === Qt.Key_Left || event.key === Qt.Key_Up) {
+          root.selStep(-1); event.accepted = true; return
+        }
+        if (event.key === Qt.Key_Right || event.key === Qt.Key_Down
+            || event.key === Qt.Key_Tab) {
+          root.selStep(1); event.accepted = true; return
+        }
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          root.tdSel(); event.accepted = true; return
+        }
+        var ch = event.text
+        if (ch === "S") { root.satAllToggle(); event.accepted = true; return }
+        if (ch === "R") { root.resetAll(); event.accepted = true; return }
+        if (ch === "s") { root.satSel(); event.accepted = true; return }
+        if (ch === "d") { root.clearSel(); event.accepted = true; return }
+        if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
     }
 
@@ -260,10 +360,21 @@ BarWidget {
         property string pickedNow: model.picked
         property bool satNow: model.sat
         readonly property bool onDesktop: pickedNow === "" || pickedNow === "-"
+        readonly property bool tileSel: index === root.sel
         x: model.tx
         y: model.ty
         width: model.tw
         height: model.th
+
+        // the spotlight: unselected tiles wear a SECOND coat of the theme's
+        // own scrim, the selected one only the base coat — you can read WHERE
+        // the keyboard is from across the room
+        Rectangle {
+          anchors.fill: parent
+          color: Color.menu.scrim
+          opacity: tileSel ? 0 : 1
+          Behavior on opacity { NumberAnimation { duration: 120 } }
+        }
 
         Rectangle {
           id: card
@@ -272,11 +383,14 @@ BarWidget {
           height: content.implicitHeight + Style.spacing.panelPadding * 2
           radius: Style.cornerRadius
           color: Color.menu.background
-          border.color: Color.menu.border
-          border.width: Math.max(1, Style.space(1))
+          border.color: tileSel ? Color.menu.selectedBackground : Color.menu.border
+          border.width: tileSel ? 2 : Math.max(1, Style.space(1))
+          opacity: tileSel ? 1 : 0.55
+          Behavior on opacity { NumberAnimation { duration: 120 } }
 
           // swallow the click so the scrim's dismiss never fires under a card
-          MouseArea { anchors.fill: parent; onClicked: {} }
+          // — and let a click bring the keyboard here (mouse and arrows agree)
+          MouseArea { anchors.fill: parent; onClicked: root.sel = tileIndex }
 
           Column {
             id: content
@@ -406,9 +520,9 @@ BarWidget {
                     anchors.fill: parent
                     onClicked: {
                       Quickshell.execDetached(["td-tint", "--window", tileAddress, modelData.key])
-                      // a fresh coat resets SATURATE, mirror td-tint's record
+                      // SATURATE rides along — td-tint carries it across coats
                       root.markPicked(tileIndex, modelData.key)
-                      root.markSat(tileIndex, false)
+                      root.sel = tileIndex
                     }
                   }
                 }
@@ -445,15 +559,107 @@ BarWidget {
               }
             }
 
+          }
+        }
+      }
+    }
+
+    // ---- the global rail, top and centre: one place to act on EVERY tile
+    // at once, and the legend that makes the overlay playable eyes-closed.
+    Rectangle {
+      id: globalPanel
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: Style.space(36)
+      width: globalCol.implicitWidth + Style.spacing.panelPadding * 2
+      height: globalCol.implicitHeight + Style.spacing.panelPadding * 2
+      radius: Style.cornerRadius
+      color: Color.menu.background
+      border.color: Color.menu.border
+      border.width: Math.max(1, Style.space(1))
+
+      // swallow clicks so the scrim's dismiss never fires under the rail
+      MouseArea { anchors.fill: parent; onClicked: {} }
+
+      Column {
+        id: globalCol
+        anchors.centerIn: parent
+        spacing: Style.spacing.sm
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: "TERMINAL PAINT"
+          color: Color.menu.text
+          font.family: Style.font.menuFamily
+          font.pixelSize: Style.font.bodySmall
+          font.letterSpacing: Style.space(2)
+        }
+
+        Row {
+          anchors.horizontalCenter: parent.horizontalCenter
+          spacing: Style.spacing.sm
+
+          Rectangle {
+            width: satAllLabel.implicitWidth + Style.space(24)
+            height: Style.space(30)
+            radius: Style.cornerRadius
+            color: "transparent"
+            border.color: Color.menu.border
+            border.width: 1
             Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: "esc · done"
+              id: satAllLabel
+              anchors.centerIn: parent
+              text: "🫗  SATURATE ALL"
               color: Color.menu.text
-              opacity: 0.5
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
             }
+            MouseArea { anchors.fill: parent; onClicked: root.satAll(true) }
           }
+
+          Rectangle {
+            width: desatAllLabel.implicitWidth + Style.space(24)
+            height: Style.space(30)
+            radius: Style.cornerRadius
+            color: "transparent"
+            border.color: Color.menu.border
+            border.width: 1
+            Text {
+              id: desatAllLabel
+              anchors.centerIn: parent
+              text: "💧  DESATURATE ALL"
+              color: Color.menu.text
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+            }
+            MouseArea { anchors.fill: parent; onClicked: root.satAll(false) }
+          }
+
+          Rectangle {
+            width: resetAllLabel.implicitWidth + Style.space(24)
+            height: Style.space(30)
+            radius: Style.cornerRadius
+            color: "transparent"
+            border.color: Color.menu.border
+            border.width: 1
+            Text {
+              id: resetAllLabel
+              anchors.centerIn: parent
+              text: "⟲  RESET DEFAULTS"
+              color: Color.menu.text
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+            }
+            MouseArea { anchors.fill: parent; onClicked: root.resetAll() }
+          }
+        }
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: "←→ select · letter paints · d desktop · s saturate · S all · R reset · ⏎ TD picker · esc done"
+          color: Color.menu.text
+          opacity: 0.5
+          font.family: Style.font.menuFamily
+          font.pixelSize: Style.font.caption
         }
       }
     }
