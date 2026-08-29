@@ -218,13 +218,14 @@ BarWidget {
     }
   }
 
-  // One process, one snapshot: the variant list and the compositor state,
-  // fetched at summon time. No polling — the picker sees the workspace as it
+  // One process, one document: `td-tint --state` is the paint oracle. The
+  // ENGINE owns window filtering, record parsing, monitor offsets and the
+  // focused window — all tested in its suite — and this view only renders.
+  // Fetched at summon time; no polling — the picker sees the workspace as it
   // was when you rang it, which is also the workspace you were looking at.
   Process {
     id: snapshot
-    command: ["bash", "-c",
-      "td-tint --json; echo @@; hyprctl -j activeworkspace; echo @@; hyprctl -j clients; echo @@; hyprctl -j monitors; echo @@; for f in \"${XDG_RUNTIME_DIR:-/tmp}\"/td-tint/0x*; do [ -f \"$f\" ] && echo \"$(basename \"$f\") $(head -1 \"$f\") $(grep -cx sat=1 \"$f\")\"; done; echo @@; hyprctl -j activewindow; true"]
+    command: ["td-tint", "--state"]
     stdout: StdioCollector { id: snapText }
     // Verified against quickshell-io.qmltypes: exited(int, QProcess::ExitStatus).
     // The enum has no QML registration — linter blind spot, not a wrong handler.
@@ -243,68 +244,39 @@ BarWidget {
   }
 
   function consume(raw) {
-    var parts = raw.split("@@")
-    console.log("td-paint: snapshot " + raw.length + " bytes, " + parts.length + " parts")
-    if (parts.length < 4) return
-    var vars, aws, clients, mons
+    var st
     try {
-      vars = JSON.parse(parts[0])
-      aws = JSON.parse(parts[1])
-      clients = JSON.parse(parts[2])
-      mons = JSON.parse(parts[3])
+      st = JSON.parse(raw)
     } catch (e) {
-      console.log("td-paint: snapshot parse failed: " + e)
+      console.log("td-paint: state parse failed: " + e)
       return
     }
-    var mon = null
-    for (var i = 0; i < mons.length; i++) if (mons[i].focused) mon = mons[i]
-    if (!mon && mons.length > 0) mon = mons[0]
-    if (!mon) return
-
-    // td-tint's runtime records, so the cards open telling the truth about
-    // each tile: which variant it wears, whether it is saturated.
-    var recs = {}
-    if (parts.length > 4) {
-      parts[4].trim().split("\n").forEach(function (ln) {
-        var rf = ln.trim().split(/\s+/)
-        if (rf.length >= 3) recs[rf[0]] = { v: rf[1], s: rf[2] !== "0" }
-      })
-    }
+    if (!st || !st.tiles || !st.monitor) return
+    console.log("td-paint: state — " + st.tiles.length + " tile(s), "
+                + (st.variants ? st.variants.length : 0) + " variants")
 
     // where the keyboard opens: on the tile you were just working in
-    var focusAddr = ""
-    if (parts.length > 5) {
-      try { focusAddr = JSON.parse(parts[5]).address || "" } catch (e2) {}
-    }
+    var focusAddr = st.focused || ""
 
-    // Terminals we can reach over OSC. Terminal Delight is deliberately not
-    // in this map — it has a better story (per-pane, persistent) via ctl.
-    var OSC_TERMS = {
-      "foot": 1, "Alacritty": 1, "kitty": 1,
-      "com.mitchellh.ghostty": 1, "org.wezfurlong.wezterm": 1
-    }
     var tiles = []
     var oscCount = 0
     var anyTd = false
-    for (var c = 0; c < clients.length; c++) {
-      var w = clients[c]
-      if (!w.workspace || w.workspace.id !== aws.id) continue
-      var isTd = w.class === "terminal-delight"
-      if (!isTd && !OSC_TERMS[w.class]) continue
-      if (isTd) anyTd = true
+    st.tiles.forEach(function (t) {
+      if (!t.on_active_workspace) return
+      if (t.terminal_delight) anyTd = true
       else oscCount++
       tiles.push({
-        address: w.address,
-        pid: w.pid,
-        td: isTd,
-        tx: w.at[0] - mon.x,
-        ty: w.at[1] - mon.y,
-        tw: w.size[0],
-        th: w.size[1],
-        picked: recs[w.address] ? recs[w.address].v : "",
-        sat: recs[w.address] ? recs[w.address].s : false
+        address: t.address,
+        pid: t.pid,
+        td: t.terminal_delight,
+        tx: t.at[0] - st.monitor.x,
+        ty: t.at[1] - st.monitor.y,
+        tw: t.size[0],
+        th: t.size[1],
+        picked: t.variant || "",
+        sat: t.saturated === true
       })
-    }
+    })
     // reading order — the order the bare arrows walk
     tiles.sort(function (a, b) { return (a.ty - b.ty) || (a.tx - b.tx) })
     tileModel.clear()
@@ -314,7 +286,7 @@ BarWidget {
       if (tiles[t].address === focusAddr) root.sel = t
     }
     root.refreshAllSat()
-    root.variants = vars
+    root.variants = st.variants || []
 
     if (oscCount === 0 && anyTd) {
       // A pure Terminal Delight workspace needs no layer at all — hand the
@@ -437,13 +409,32 @@ BarWidget {
         width: model.tw
         height: model.th
 
-        // the spotlight: unselected tiles wear a SECOND coat of the theme's
-        // own scrim, the selected one only the base coat — you can read WHERE
-        // the keyboard is from across the room
+        // the spotlight: unselected tiles wear TWO extra coats of the theme's
+        // own scrim (three with the base), the selected one only the base —
+        // the lit tile reads from across the room
         Rectangle {
           anchors.fill: parent
           color: Color.menu.scrim
           opacity: tileSel ? 0 : 1
+          Behavior on opacity { NumberAnimation { duration: 120 } }
+        }
+        Rectangle {
+          anchors.fill: parent
+          color: Color.menu.scrim
+          opacity: tileSel ? 0 : 1
+          Behavior on opacity { NumberAnimation { duration: 120 } }
+        }
+
+        // and the selected tile is FRAMED — a bright band around the whole
+        // window, not just its card
+        Rectangle {
+          anchors.fill: parent
+          anchors.margins: Style.space(2)
+          color: "transparent"
+          radius: Style.cornerRadius
+          border.color: Color.menu.text
+          border.width: Style.space(3)
+          opacity: tileSel ? 0.9 : 0
           Behavior on opacity { NumberAnimation { duration: 120 } }
         }
 
@@ -458,9 +449,11 @@ BarWidget {
           // faded behind a quiet one (selectedBackground made this read
           // exactly backward — it vanishes into the card fill)
           border.color: tileSel ? Color.menu.text : Color.menu.border
-          border.width: tileSel ? 2 : Math.max(1, Style.space(1))
-          opacity: tileSel ? 1 : 0.55
+          border.width: tileSel ? 3 : Math.max(1, Style.space(1))
+          opacity: tileSel ? 1 : 0.3
+          scale: tileSel ? 1 : 0.94
           Behavior on opacity { NumberAnimation { duration: 120 } }
+          Behavior on scale { NumberAnimation { duration: 120 } }
 
           // swallow the click so the scrim's dismiss never fires under a card
           // — and let a click bring the keyboard here (mouse and arrows agree)
