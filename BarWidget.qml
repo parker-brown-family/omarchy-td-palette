@@ -77,7 +77,84 @@ BarWidget {
   // the open overlay reflects the pick immediately; reopening re-reads the
   // records, which remain the truth.
   function markPicked(i, key) { tileModel.setProperty(i, "picked", key) }
-  function markSat(i, on) { tileModel.setProperty(i, "sat", on) }
+  function markSat(i, on) { tileModel.setProperty(i, "sat", on); root.refreshAllSat() }
+
+  // The workspace-wide crank state the global toggle shows: ON only when
+  // every paintable tile is cranked. ListModel edits don't re-run bindings,
+  // so markSat/consume refresh it by hand.
+  property bool allSat: false
+  function refreshAllSat() {
+    var anyOsc = false, all = true
+    for (var i = 0; i < tileModel.count; i++) {
+      var t = tileModel.get(i)
+      if (t.td) continue
+      anyOsc = true
+      if (!t.sat) all = false
+    }
+    root.allSat = anyOsc && all
+  }
+
+  // One switch, everywhere: label + a chunky track that SAYS which state it
+  // is in. The knob slides, the track fills, and the word ON/OFF sits in the
+  // empty half — state you can read from across the room, mouse-clickable.
+  component SatToggle: Item {
+    id: st
+    property string label: "SATURATE"
+    property bool on: false
+    signal flipped()
+    implicitWidth: stRow.implicitWidth
+    implicitHeight: Style.space(30)
+
+    Row {
+      id: stRow
+      spacing: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: st.label
+        color: Color.menu.text
+        font.family: Style.font.menuFamily
+        font.pixelSize: Style.font.caption
+        font.letterSpacing: Style.space(1)
+      }
+
+      Rectangle {
+        id: stTrack
+        width: Style.space(52)
+        height: Style.space(24)
+        radius: height / 2
+        anchors.verticalCenter: parent.verticalCenter
+        color: st.on ? Color.menu.selectedBackground : "transparent"
+        border.color: st.on ? Color.menu.selectedBackground : Color.menu.border
+        border.width: 1
+        Behavior on color { ColorAnimation { duration: 100 } }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          x: st.on ? Style.space(7) : stTrack.width - implicitWidth - Style.space(7)
+          text: st.on ? "ON" : "OFF"
+          color: st.on ? Color.menu.selectedText : Color.menu.text
+          opacity: st.on ? 1 : 0.6
+          font.family: Style.font.menuFamily
+          font.pixelSize: Style.font.caption - 2
+          font.bold: true
+        }
+
+        Rectangle {
+          width: stTrack.height - Style.space(6)
+          height: width
+          radius: width / 2
+          y: Style.space(3)
+          x: st.on ? stTrack.width - width - Style.space(3) : Style.space(3)
+          color: st.on ? Color.menu.selectedText : Color.menu.text
+          Behavior on x { NumberAnimation { duration: 100 } }
+        }
+      }
+    }
+
+    MouseArea { anchors.fill: parent; onClicked: st.flipped() }
+  }
 
   // ---- keyboard-first: everything a click can do, off the home row. One
   // selected tile (opens on the window you were just focused in); bare
@@ -128,16 +205,9 @@ BarWidget {
       root.markSat(i, on)
     }
   }
-  // The global toggle reads the room: any tile still dry -> crank them all;
-  // every tile already cranked -> pour them all back.
-  function satAllToggle() {
-    var anyDry = false
-    for (var i = 0; i < tileModel.count; i++) {
-      var t = tileModel.get(i)
-      if (!t.td && !t.sat) anyDry = true
-    }
-    root.satAll(anyDry)
-  }
+  // The global toggle mirrors the switch it drives: everything cranked ->
+  // pour it all back, anything dry -> crank it all.
+  function satAllToggle() { root.satAll(!root.allSat) }
   function resetAll() {
     for (var i = 0; i < tileModel.count; i++) {
       var t = tileModel.get(i)
@@ -243,6 +313,7 @@ BarWidget {
       tileModel.append(tiles[t])
       if (tiles[t].address === focusAddr) root.sel = t
     }
+    root.refreshAllSat()
     root.variants = vars
 
     if (oscCount === 0 && anyTd) {
@@ -383,7 +454,10 @@ BarWidget {
           height: content.implicitHeight + Style.spacing.panelPadding * 2
           radius: Style.cornerRadius
           color: Color.menu.background
-          border.color: tileSel ? Color.menu.selectedBackground : Color.menu.border
+          // the SELECTED painter wears the bright ring; unselected cards sit
+          // faded behind a quiet one (selectedBackground made this read
+          // exactly backward — it vanishes into the card fill)
+          border.color: tileSel ? Color.menu.text : Color.menu.border
           border.width: tileSel ? 2 : Math.max(1, Style.space(1))
           opacity: tileSel ? 1 : 0.55
           Behavior on opacity { NumberAnimation { duration: 120 } }
@@ -459,7 +533,10 @@ BarWidget {
                   }
                   Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "DESKTOP"
+                    // the key IS the label — d, worn big, bold and underlined
+                    textFormat: Text.RichText
+                    text: "<span style=\"font-size:" + (Style.font.caption + 4)
+                      + "px\"><b><u>D</u></b></span>ESKTOP"
                     color: onDesktop ? Color.menu.selectedText : Color.menu.text
                     opacity: onDesktop ? 1 : 0.65
                     font.family: Style.font.menuFamily
@@ -502,9 +579,14 @@ BarWidget {
                     }
                     Text {
                       anchors.horizontalCenter: parent.horizontalCenter
-                      text: modelData.key.toUpperCase()
+                      // press the FIRST LETTER to paint — so the first letter
+                      // is the loud one: bold, underlined, four points up
+                      textFormat: Text.RichText
+                      text: "<span style=\"font-size:" + (Style.font.caption + 4)
+                        + "px\"><b><u>" + modelData.key.charAt(0).toUpperCase()
+                        + "</u></b></span>" + modelData.key.slice(1).toUpperCase()
                       color: Color.menu.text
-                      opacity: 0.75
+                      opacity: 0.85
                       font.family: Style.font.menuFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -529,33 +611,17 @@ BarWidget {
               }
             }
 
-            // SATURATE — the overflowing paint can: crank this tile's text
-            // colour to the Terminal Delight look, click again to pour it
-            // back. Stateless chip by design; td-tint's record carries the
+            // SATURATE — crank this tile's text to the Terminal Delight look.
+            // One switch that shows its state; td-tint's record carries the
             // truth and --sync re-applies it.
-            Rectangle {
+            SatToggle {
               visible: !model.td
               anchors.horizontalCenter: parent.horizontalCenter
-              width: satLabel.implicitWidth + Style.space(24)
-              height: Style.space(30)
-              radius: Style.cornerRadius
-              color: satNow ? Color.menu.selectedBackground : "transparent"
-              border.color: Color.menu.border
-              border.width: 1
-              Text {
-                id: satLabel
-                anchors.centerIn: parent
-                text: "🫗  SATURATE"
-                color: satNow ? Color.menu.selectedText : Color.menu.text
-                font.family: Style.font.menuFamily
-                font.pixelSize: Style.font.caption
-              }
-              MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                  Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
-                  root.markSat(tileIndex, !satNow)
-                }
+              label: "SATURATE"
+              on: satNow
+              onFlipped: {
+                Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
+                root.markSat(tileIndex, !satNow)
               }
             }
 
@@ -596,45 +662,17 @@ BarWidget {
 
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.spacing.sm
+          spacing: Style.spacing.md
 
-          Rectangle {
-            width: satAllLabel.implicitWidth + Style.space(24)
-            height: Style.space(30)
-            radius: Style.cornerRadius
-            color: "transparent"
-            border.color: Color.menu.border
-            border.width: 1
-            Text {
-              id: satAllLabel
-              anchors.centerIn: parent
-              text: "🫗  SATURATE ALL"
-              color: Color.menu.text
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.caption
-            }
-            MouseArea { anchors.fill: parent; onClicked: root.satAll(true) }
+          SatToggle {
+            anchors.verticalCenter: parent.verticalCenter
+            label: "SATURATE ALL"
+            on: root.allSat
+            onFlipped: root.satAll(!root.allSat)
           }
 
           Rectangle {
-            width: desatAllLabel.implicitWidth + Style.space(24)
-            height: Style.space(30)
-            radius: Style.cornerRadius
-            color: "transparent"
-            border.color: Color.menu.border
-            border.width: 1
-            Text {
-              id: desatAllLabel
-              anchors.centerIn: parent
-              text: "💧  DESATURATE ALL"
-              color: Color.menu.text
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.caption
-            }
-            MouseArea { anchors.fill: parent; onClicked: root.satAll(false) }
-          }
-
-          Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
             width: resetAllLabel.implicitWidth + Style.space(24)
             height: Style.space(30)
             radius: Style.cornerRadius
