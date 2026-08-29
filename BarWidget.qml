@@ -73,13 +73,19 @@ BarWidget {
     else root.paintOpen()
   }
 
+  // Optimistic card state: a click fires the command AND marks the model, so
+  // the open overlay reflects the pick immediately; reopening re-reads the
+  // records, which remain the truth.
+  function markPicked(i, key) { tileModel.setProperty(i, "picked", key) }
+  function markSat(i, on) { tileModel.setProperty(i, "sat", on) }
+
   // One process, one snapshot: the variant list and the compositor state,
   // fetched at summon time. No polling — the picker sees the workspace as it
   // was when you rang it, which is also the workspace you were looking at.
   Process {
     id: snapshot
     command: ["bash", "-c",
-      "td-tint --json; echo @@; hyprctl -j activeworkspace; echo @@; hyprctl -j clients; echo @@; hyprctl -j monitors"]
+      "td-tint --json; echo @@; hyprctl -j activeworkspace; echo @@; hyprctl -j clients; echo @@; hyprctl -j monitors; echo @@; for f in \"${XDG_RUNTIME_DIR:-/tmp}\"/td-tint/0x*; do [ -f \"$f\" ] && echo \"$(basename \"$f\") $(head -1 \"$f\") $(grep -cx sat=1 \"$f\")\"; done; true"]
     stdout: StdioCollector { id: snapText }
     // Verified against quickshell-io.qmltypes: exited(int, QProcess::ExitStatus).
     // The enum has no QML registration — linter blind spot, not a wrong handler.
@@ -116,6 +122,16 @@ BarWidget {
     if (!mon && mons.length > 0) mon = mons[0]
     if (!mon) return
 
+    // td-tint's runtime records, so the cards open telling the truth about
+    // each tile: which variant it wears, whether it is saturated.
+    var recs = {}
+    if (parts.length > 4) {
+      parts[4].trim().split("\n").forEach(function (ln) {
+        var rf = ln.trim().split(/\s+/)
+        if (rf.length >= 3) recs[rf[0]] = { v: rf[1], s: rf[2] !== "0" }
+      })
+    }
+
     // Terminals we can reach over OSC. Terminal Delight is deliberately not
     // in this map — it has a better story (per-pane, persistent) via ctl.
     var OSC_TERMS = {
@@ -139,7 +155,9 @@ BarWidget {
         tx: w.at[0] - mon.x,
         ty: w.at[1] - mon.y,
         tw: w.size[0],
-        th: w.size[1]
+        th: w.size[1],
+        picked: recs[w.address] ? recs[w.address].v : "",
+        sat: recs[w.address] ? recs[w.address].s : false
       })
     }
     root.variants = vars
@@ -232,10 +250,16 @@ BarWidget {
       model: tileModel
       delegate: Item {
         required property var model
+        required property int index
         // the inner variant Repeater runs its delegates in required-property
         // mode, where the outer `model` context is out of reach — alias what
-        // the cards need onto the tile root instead
+        // the cards need onto the tile root instead (lexical scoping still
+        // reaches these; only the model context is disabled in there)
         property string tileAddress: model.address
+        property int tileIndex: index
+        property string pickedNow: model.picked
+        property bool satNow: model.sat
+        readonly property bool onDesktop: pickedNow === "" || pickedNow === "-"
         x: model.tx
         y: model.ty
         width: model.tw
@@ -301,35 +325,39 @@ BarWidget {
               width: parent.width
               spacing: Style.spacing.sm
 
-              // the ⟲ card first: back to whatever the desktop theme says
+              // the ⟲ card first: back to whatever the desktop theme says.
+              // Lit while the tile follows the desktop (no recorded variant).
               Rectangle {
                 width: Style.space(64)
                 height: Style.space(64)
                 radius: Style.cornerRadius
-                color: "transparent"
+                color: onDesktop ? Color.menu.selectedBackground : "transparent"
                 border.color: Color.menu.border
-                border.width: 1
+                border.width: onDesktop ? 2 : 1
                 Column {
                   anchors.centerIn: parent
                   spacing: Style.space(2)
                   Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "⟲"
-                    color: Color.menu.text
+                    color: onDesktop ? Color.menu.selectedText : Color.menu.text
                     font.pixelSize: Style.font.heading
                   }
                   Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "DESKTOP"
-                    color: Color.menu.text
-                    opacity: 0.65
+                    color: onDesktop ? Color.menu.selectedText : Color.menu.text
+                    opacity: onDesktop ? 1 : 0.65
                     font.family: Style.font.menuFamily
                     font.pixelSize: Style.font.caption
                   }
                 }
                 MouseArea {
                   anchors.fill: parent
-                  onClicked: Quickshell.execDetached(["td-tint", "--window", tileAddress, "--clear"])
+                  onClicked: {
+                    Quickshell.execDetached(["td-tint", "--window", tileAddress, "--clear"])
+                    root.markPicked(tileIndex, "-")
+                  }
                 }
               }
 
@@ -337,14 +365,19 @@ BarWidget {
                 model: root.variants
                 delegate: Rectangle {
                   required property var modelData
+                  // string → color coercion happens on the typed property,
+                  // which is what makes Qt.alpha below safe to call
+                  readonly property color acc: modelData.accent
+                  readonly property bool lit: modelData.key === pickedNow
                   width: Style.space(64)
                   height: Style.space(64)
                   radius: Style.cornerRadius
-                  color: "transparent"
                   // the variant's own two colours ARE the data being chosen —
-                  // this border is content, not chrome
-                  border.color: modelData.accent
-                  border.width: 1
+                  // this border is content, not chrome; the current pick gets
+                  // a thicker ring and a wash of its own accent
+                  color: lit ? Qt.alpha(acc, 0.16) : "transparent"
+                  border.color: acc
+                  border.width: lit ? 2 : 1
                   Column {
                     anchors.centerIn: parent
                     spacing: Style.space(2)
@@ -371,7 +404,12 @@ BarWidget {
                   }
                   MouseArea {
                     anchors.fill: parent
-                    onClicked: Quickshell.execDetached(["td-tint", "--window", tileAddress, modelData.key])
+                    onClicked: {
+                      Quickshell.execDetached(["td-tint", "--window", tileAddress, modelData.key])
+                      // a fresh coat resets SATURATE, mirror td-tint's record
+                      root.markPicked(tileIndex, modelData.key)
+                      root.markSat(tileIndex, false)
+                    }
                   }
                 }
               }
@@ -387,20 +425,23 @@ BarWidget {
               width: satLabel.implicitWidth + Style.space(24)
               height: Style.space(30)
               radius: Style.cornerRadius
-              color: "transparent"
+              color: satNow ? Color.menu.selectedBackground : "transparent"
               border.color: Color.menu.border
               border.width: 1
               Text {
                 id: satLabel
                 anchors.centerIn: parent
                 text: "🫗  SATURATE"
-                color: Color.menu.text
+                color: satNow ? Color.menu.selectedText : Color.menu.text
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
               }
               MouseArea {
                 anchors.fill: parent
-                onClicked: Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
+                onClicked: {
+                  Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
+                  root.markSat(tileIndex, !satNow)
+                }
               }
             }
 
