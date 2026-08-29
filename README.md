@@ -118,6 +118,22 @@ input here.
 omarchy plugin add https://github.com/parker-brown-family/omarchy-td-palette.git --enable
 ```
 
+**Unlock the screen first.** Not a quirk of this plugin — on Omarchy 4.0.1 with
+quickshell 0.3.1, *any* write under `~/.config/omarchy/plugins/` while the
+session is locked hot-reloads the shell, which tears down the live session lock
+and aborts the shell under the lockscreen. Installing or updating anything is
+such a write. The screen stays locked and the shell relaunches on its own, so
+you lose the bar for a few seconds rather than your session — but
+`omarchy-restart-shell` will then refuse to help you, because it declines to
+restart a locked session.
+
+This is upstream: [omarchy#7106](https://github.com/omacom/omarchy/issues/7106)
+and [#8647](https://github.com/omacom/omarchy/issues/8647), fixed by the open
+[#7572](https://github.com/omacom/omarchy/pull/7572), with the underlying defect
+at [quickshell#962](https://github.com/quickshell-mirror/quickshell/issues/962).
+It applies to every Omarchy plugin equally. Until #7572 lands, run
+`omarchy plugin add` and `omarchy plugin update` against an unlocked session.
+
 ## Remove
 
 ```bash
