@@ -352,6 +352,11 @@ BarWidget {
     // closing cleanly still surfaces something rather than hanging the summon.
     // qmllint disable signal-handler-parameters
     onExited: function (exitCode, exitStatus) {
+      // …unless the document already landed. Exit normally arrives AFTER the
+      // stream closes, and re-arming here fired the watchdog two seconds into
+      // every successful summon: a no-op guarded by the run token, but a log
+      // line that read like a failure on the happy path.
+      if (root.snapTaken === root.snapRun) return
       snapWatchdog.restart()
     }
     // qmllint enable signal-handler-parameters
@@ -554,6 +559,12 @@ BarWidget {
     function toggle(): void { root.paintToggle() }
     function open(): void { root.paintOpen() }
     function close(): void { root.paintDismiss(false) }
+
+    // Open straight into one of the two lists. `o` flips it once the overlay
+    // is up, but a keybind that means "paint this workspace in Omarchy
+    // themes" should not have to open on the other list and press a key.
+    function source(src: string): void { root.setSource(src) }
+    function openWith(src: string): void { root.setSource(src); root.paintOpen() }
   }
 
   PanelWindow {
