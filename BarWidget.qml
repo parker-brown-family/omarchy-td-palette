@@ -17,12 +17,24 @@ import qs.Ui
 // overlay it raises: a "PAINT THIS TERMINAL" picker floated over every
 // terminal TILE on the active workspace.
 //
-// TWO SOURCES of colour, one painter. TERMINAL DELIGHT is the palette set —
-// eleven hand-made identities, each a glyph and a hue, made for telling one
-// terminal from the next. OMARCHY is every theme installed on this box, the
-// desktop's own vocabulary, aimed at ONE tile instead of all of them: the
-// same colours.toml, down the same tty, through the same OSC. Neither is the
-// "off" state of the other, so the switch is two segments, not a checkbox.
+// The colours are OMARCHY'S OWN — every theme installed on this box, aimed at
+// ONE tile instead of the whole desktop. It is the same colors.toml, down the
+// same tty, through the same OSC that a theme switch would use; the only
+// difference is how far it reaches.
+//
+// There is no second list and no source switch. Terminal Delight ships eleven
+// hand-made palettes and they are good, but a picker that offers our set
+// beside the desktop's is a picker asking you to hold an opinion about whose
+// colours are better before you can paint a terminal. Omarchy's set is larger,
+// maintained by people who do this, and already the vocabulary you chose your
+// desktop from — and Terminal Delight is IN it, as one theme, so nothing is
+// out of reach. `td-tint cherry` still wears a palette from a prompt.
+//
+// The practical dividend: every lowercase letter belongs to a theme NAME. A
+// verb bound to one steals it — `o` was the source switch and `osaka-jade`
+// wanted it, `s` was saturate and `solitude` wanted it, and `d` was safe only
+// until someone installs `dracula`. So the rule here is absolute: letters
+// name themes, everything else is a verb.
 //
 // The shell cannot paint inside another client, but it can float a layer
 // above the tiling and put a card in the middle of each terminal window. A
@@ -54,23 +66,9 @@ BarWidget {
   function open() { root.paintOpen() }
   function close() { root.paintDismiss(false) }
 
-  // What a summon snapshot found: both colour lists, and the terminal tiles
+  // What a summon snapshot found: the installed themes, and the terminal tiles
   // (monitor-local rects) of the active workspace.
-  property var variants: []
-  property var themes: []
-
-  // Which list the cards are drawn from. It outlives a summon on purpose —
-  // you pick a source once and paint a workspace with it, and being dropped
-  // back to the other one every time the overlay closes would be a switch
-  // that does not stay switched.
-  property string source: "td"
-  readonly property var cards: root.source === "omarchy" ? root.themes : root.variants
-
-  function setSource(src) {
-    if (src !== "td" && src !== "omarchy") return
-    root.source = src
-  }
-  function toggleSource() { root.setSource(root.source === "td" ? "omarchy" : "td") }
+  property var cards: []
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -110,12 +108,13 @@ BarWidget {
 
   // Optimistic card state: a click fires the command AND marks the model, so
   // the open overlay reflects the pick immediately; reopening re-reads the
-  // records, which remain the truth. The SOURCE is marked with the key,
-  // because `nord` the theme and `nord` the palette would otherwise light
-  // each other's card.
+  // records, which remain the truth. The source is marked with the key: a
+  // tile wearing a Terminal Delight palette from the command line has a pick
+  // this picker cannot show, and it must light no card rather than the card
+  // of whatever theme happens to share its name.
   function markPicked(i, key, src) {
     tileModel.setProperty(i, "picked", key)
-    tileModel.setProperty(i, "src", src === undefined ? root.source : src)
+    tileModel.setProperty(i, "src", src === undefined ? "omarchy" : src)
   }
   function markSat(i, on) { tileModel.setProperty(i, "sat", on); root.refreshAllSat() }
 
@@ -196,46 +195,6 @@ BarWidget {
     MouseArea { anchors.fill: parent; onClicked: st.flipped() }
   }
 
-  // Which list the cards come from. Two segments rather than a switch,
-  // because there is no "off": both sides are a set of colours, and the one
-  // you are not using is not a disabled version of the one you are. The lit
-  // segment is the list on screen, and it says its own name.
-  component SourcePicker: Row {
-    id: sp
-    spacing: Style.space(6)
-    property string current: "td"
-    signal picked(string src)
-
-    Repeater {
-      model: [{ src: "td", label: "TERMINAL DELIGHT" }, { src: "omarchy", label: "OMARCHY" }]
-      delegate: Rectangle {
-        required property var modelData
-        readonly property bool active: modelData.src === sp.current
-        width: segText.implicitWidth + Style.space(26)
-        height: Style.space(30)
-        radius: Style.cornerRadius
-        color: active ? Color.menu.selectedBackground : "transparent"
-        border.color: active ? Color.menu.selectedBackground : Color.menu.border
-        border.width: 1
-        Behavior on color { ColorAnimation { duration: 100 } }
-
-        Text {
-          id: segText
-          anchors.centerIn: parent
-          text: modelData.label
-          color: active ? Color.menu.selectedText : Color.menu.text
-          opacity: active ? 1 : 0.6
-          font.family: Style.font.menuFamily
-          font.pixelSize: Style.font.caption
-          font.letterSpacing: Style.space(1)
-          font.bold: active
-        }
-
-        MouseArea { anchors.fill: parent; onClicked: sp.picked(modelData.src) }
-      }
-    }
-  }
-
   // ---- keyboard-first: everything a click can do, off the home row. One
   // selected tile (opens on the window you were just focused in); bare
   // arrows walk reading order; a variant's FIRST LETTER paints the selected
@@ -247,14 +206,11 @@ BarWidget {
     if (n > 0) root.sel = ((root.sel + d) % n + n) % n
   }
 
-  // The argv that paints ONE window, and the only place the two sources
-  // differ. `--` before a palette key so a key beginning with a dash is still
-  // a key; `--theme` carries its own name, because the two namespaces can
-  // hold the same word and td-tint must never have to guess.
+  // The argv that paints ONE window. `--theme` carries its own name rather
+  // than leaving it positional, because td-tint knows two namespaces and a
+  // word in both must never be resolved by guesswork.
   function paintArgs(addr, key) {
-    return root.source === "omarchy"
-      ? ["td-tint", "--window", addr, "--theme", key]
-      : ["td-tint", "--window", addr, "--", key]
+    return ["td-tint", "--window", addr, "--theme", key]
   }
 
   function applyCard(i, c) {
@@ -264,13 +220,11 @@ BarWidget {
     root.markPicked(i, c.key)  // SATURATE rides along: td-tint keeps it
   }
 
-  // A letter jumps to the first card whose NAME starts with it, and pressing
-  // it again walks to the next one that does. For the palette set that is
-  // exactly the old behaviour — the eleven keys were renamed so every first
-  // letter is unique — and it is the only thing that can work for Omarchy's
-  // themes, where three of them start with `c` and three with `r`. Painting
-  // is instant and `d` puts it back, so walking the matches by pressing is
-  // cheaper than any modal way of choosing between them.
+  // A letter jumps to the first theme whose NAME starts with it, and pressing
+  // it again walks to the next one that does. Three themes start with `c`
+  // here and three with `r`, so a letter cannot own one card; cycling is the
+  // only thing that works, and it costs nothing, because painting is instant
+  // and Backspace puts it back.
   function applyLetter(ch) {
     var t = tileModel.get(root.sel)
     if (!t || t.td) return
@@ -278,7 +232,7 @@ BarWidget {
     if (!cards.length) return
     var start = 0
     for (var j = 0; j < cards.length; j++) {
-      if (cards[j].key === t.picked && t.src === root.source) { start = j + 1; break }
+      if (cards[j].key === t.picked && t.src === "omarchy") { start = j + 1; break }
     }
     for (var i = 0; i < cards.length; i++) {
       var c = cards[(start + i) % cards.length]
@@ -292,7 +246,7 @@ BarWidget {
     var t = tileModel.get(root.sel)
     if (!t || t.td) return
     Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
-    root.markPicked(root.sel, "-", "td")
+    root.markPicked(root.sel, "-", "")
     root.markSat(root.sel, false)
   }
   function satSel() {
@@ -323,7 +277,7 @@ BarWidget {
       var t = tileModel.get(i)
       if (t.td) continue
       Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
-      root.markPicked(i, "-", "td")
+      root.markPicked(i, "-", "")
       root.markSat(i, false)
     }
   }
@@ -374,15 +328,14 @@ BarWidget {
   }
 
   // The trust boundary, and the reason the rest of this file can be read as
-  // if the oracle were honest. `td-tint --state` reports two card lists this
-  // plugin does not author: palette keys, glyphs and colours come from
-  // whatever theme repository installed them (`variants.toml` →
-  // `install-variants.sh`), and theme names are DIRECTORY NAMES from
+  // if the oracle were honest. The theme list `td-tint --state` reports is not
+  // ours in any sense: the names are DIRECTORY NAMES from
   // ~/.config/omarchy/themes and Omarchy's own share — anyone's, including a
-  // theme installed from a stranger's repo an hour ago. Every label drawn
-  // below, every tile colour, and every argv word handed to `td-tint` is built
-  // from those lists — so both are normalised HERE, by the same function, and
-  // a record that does not fit the shape is dropped rather than repaired.
+  // theme cloned from a stranger's repo an hour ago — and the colours are
+  // whatever that theme's colors.toml says. Every label drawn below, every
+  // card colour, and every argv word handed to `td-tint` is built from that
+  // list, so it is normalised HERE, once, and a record that does not fit the
+  // shape is dropped rather than repaired.
   //
   //   key      the identity AND the argv word. Lower alphanumeric with inner
   //            dashes, never leading `-`: it can carry no markup, and it can
@@ -390,8 +343,6 @@ BarWidget {
   //   label    what a human reads, and the letter the keyboard matches.
   //            Display only — never argv — so it may carry spaces and case,
   //            but control characters are cut and the length is capped.
-  //   glyph    one short display grapheme, drawn as plain text. Empty for a
-  //            theme, which is drawn as a swatch of its own colours instead.
   //   colours  #rgb / #rrggbb / #aarrggbb only — anything else lands in a
   //            string→color coercion whose failure modes are not ours.
   readonly property var keyRe: /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -425,7 +376,6 @@ BarWidget {
       out.push({
         key: v.key,
         label: label,
-        glyph: typeof v.glyph === "string" ? v.glyph.slice(0, 8) : "",
         accent: v.accent,
         partner: v.partner,
         // taste-ok (rule 3): not a colour this plugin chose to draw — it is
@@ -467,7 +417,6 @@ BarWidget {
     }
     if (!st || !st.tiles || !st.monitor) return
     console.log("td-paint: state — " + st.tiles.length + " tile(s), "
-                + (st.variants ? st.variants.length : 0) + " palettes, "
                 + (st.themes ? st.themes.length : 0) + " themes")
 
     // where the keyboard opens: on the tile you were just working in
@@ -490,7 +439,7 @@ BarWidget {
         tw: t.size[0],
         th: t.size[1],
         picked: t.variant || "",
-        src: t.source === "omarchy" ? "omarchy" : "td",
+        src: t.source === "omarchy" ? "omarchy" : "",
         sat: t.saturated === true
       })
     })
@@ -503,11 +452,7 @@ BarWidget {
       if (tiles[t].address === focusAddr) root.sel = t
     }
     root.refreshAllSat()
-    root.variants = root.sanitizeCards(st.variants, "palette")
-    root.themes = root.sanitizeCards(st.themes, "theme")
-    // A box with no themes readable is not a box you want the OMARCHY
-    // segment selected on — fall back rather than open on an empty grid.
-    if (root.source === "omarchy" && root.themes.length === 0) root.source = "td"
+    root.cards = root.sanitizeCards(st.themes, "theme")
 
     if (oscCount === 0 && anyTd) {
       // A pure Terminal Delight workspace needs no layer at all — hand the
@@ -520,8 +465,17 @@ BarWidget {
         "Nothing to paint", "No terminal windows on this workspace."])
       return
     }
+    // No colours is a different failure from no terminals, and saying so is
+    // the difference between "my themes are missing" and a grid of empty
+    // cards the user is left to interpret.
+    if (root.cards.length === 0) {
+      Quickshell.execDetached(["notify-send", "-a", "Terminal Paint", "-e",
+        "No themes to paint with",
+        "td-tint reported no installed Omarchy themes. Is td-tint current?"])
+      return
+    }
     console.log("td-paint: overlay up — " + tileModel.count + " tile(s), "
-                + root.cards.length + " " + root.source + " card(s)")
+                + root.cards.length + " theme card(s)")
     root.opened = true
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
@@ -533,7 +487,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "🎨"
-    tooltipText: "Paint terminals — left: pick per tile (Terminal Delight palettes or Omarchy themes) · "
+    tooltipText: "Paint terminals — left: give each tile its own Omarchy theme · "
                + "middle: TD panes everywhere · right: done painting"
 
     // Left paints HERE (the workspace you are looking at), middle raises
@@ -559,12 +513,6 @@ BarWidget {
     function toggle(): void { root.paintToggle() }
     function open(): void { root.paintOpen() }
     function close(): void { root.paintDismiss(false) }
-
-    // Open straight into one of the two lists. `o` flips it once the overlay
-    // is up, but a keybind that means "paint this workspace in Omarchy
-    // themes" should not have to open on the other list and press a key.
-    function source(src: string): void { root.setSource(src) }
-    function openWith(src: string): void { root.setSource(src); root.paintOpen() }
   }
 
   PanelWindow {
@@ -609,15 +557,19 @@ BarWidget {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
           root.tdSel(); event.accepted = true; return
         }
+        // Space saturates the selected tile, Backspace hands it back to the
+        // desktop. Both used to be letters — `s` and `d` — and both were
+        // wrong for the same reason: a lowercase letter belongs to a theme
+        // NAME, and `s` was already stealing `solitude`. Verbs live on keys
+        // that can never be a name, and the two workspace-wide verbs stay on
+        // SHIFTED letters, which the name-matching path never sees.
+        if (event.key === Qt.Key_Space) { root.satSel(); event.accepted = true; return }
+        if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
+          root.clearSel(); event.accepted = true; return
+        }
         var ch = event.text
         if (ch === "S") { root.satAllToggle(); event.accepted = true; return }
         if (ch === "R") { root.resetAll(); event.accepted = true; return }
-        if (ch === "s") { root.satSel(); event.accepted = true; return }
-        if (ch === "d") { root.clearSel(); event.accepted = true; return }
-        // `o` flips the source. It is the one letter that is neither a
-        // palette initial (a b c e g n p r t v w) nor already spoken for, and
-        // it reads as the thing it reaches.
-        if (ch === "o") { root.toggleSource(); event.accepted = true; return }
         if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
     }
@@ -702,9 +654,7 @@ BarWidget {
 
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
-              text: model.td ? "TERMINAL DELIGHT"
-                            : (root.source === "omarchy" ? "PAINT THIS TERMINAL — OMARCHY THEMES"
-                                                         : "PAINT THIS TERMINAL")
+              text: model.td ? "TERMINAL DELIGHT" : "PAINT THIS TERMINAL"
               color: Color.menu.text
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.bodySmall
@@ -778,9 +728,9 @@ BarWidget {
                       font.pixelSize: Style.font.heading
                     }
                     // The key IS the label. Same two-Text mechanism as the
-                    // variant cards below — the ⟲ card's name is ours and could
-                    // safely be rich text, but a picker where one tile is drawn
-                    // by a different code path is a picker where one tile drifts.
+                    // theme cards below — the ⟲ card's name is ours and could
+                    // safely be rich text, but a picker where one card is drawn
+                    // by a different code path is a picker where one card drifts.
                     Row {
                       anchors.horizontalCenter: parent.horizontalCenter
                       Text {
@@ -809,7 +759,7 @@ BarWidget {
                     anchors.fill: parent
                     onClicked: {
                       Quickshell.execDetached(["td-tint", "--window", tileAddress, "--clear"])
-                      root.markPicked(tileIndex, "-", "td")
+                      root.markPicked(tileIndex, "-", "")
                     }
                   }
                 }
@@ -822,10 +772,11 @@ BarWidget {
                     // string → color coercion happens on the typed property,
                     // which is what makes Qt.alpha below safe to call
                     readonly property color acc: modelData.accent
-                    // a pick lights its card only under the list it came from:
-                    // `nord` the theme and `nord` the palette are two answers
+                    // A tile wearing a Terminal Delight palette from a prompt has a pick
+                    // this picker cannot show — it lights nothing, rather than the card of
+                    // whatever theme happens to share its name.
                     readonly property bool lit: modelData.key === pickedNow
-                                                && pickedSrc === root.source
+                                                && pickedSrc === "omarchy"
                     width: Style.space(78)
                     height: Style.space(78)
                     radius: Style.cornerRadius
@@ -839,25 +790,12 @@ BarWidget {
                       anchors.centerIn: parent
                       spacing: Style.space(2)
 
-                      // A palette has a face: one glyph, picked so a wall of
-                      // terminals can be read at a glance.
-                      Text {
-                        visible: modelData.glyph !== ""
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        // stated, not inferred: AutoText would sniff this string
-                        // and the string is not ours to trust
-                        textFormat: Text.PlainText
-                        text: modelData.glyph
-                        font.pixelSize: Style.font.heading
-                      }
-
-                      // A theme has no glyph and should not be given one: what
-                      // distinguishes Osaka Jade from Tokyo Night IS the
-                      // colour. So the face is a two-line terminal in the
-                      // theme's own background, accent and foreground — the
-                      // thing the card actually does, at 34 by 24.
+                      // A theme gets no glyph and should not be given one: what tells
+                      // Osaka Jade from Tokyo Night IS the colour. So the face is a small
+                      // terminal drawn in the theme's own background, accent and
+                      // foreground — the thing the card actually does, rather than a face
+                      // invented for it.
                       Rectangle {
-                        visible: modelData.glyph === ""
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Style.space(36)
                         height: Style.space(26)
@@ -992,15 +930,6 @@ BarWidget {
           font.letterSpacing: Style.space(2)
         }
 
-        // Row one is WHICH COLOURS, row two is WHAT TO DO WITH THEM. The
-        // source comes first because it changes what every card below says,
-        // and a control that reframes the whole grid belongs above it.
-        SourcePicker {
-          anchors.horizontalCenter: parent.horizontalCenter
-          current: root.source
-          onPicked: function (src) { root.setSource(src) }
-        }
-
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
           spacing: Style.spacing.md
@@ -1034,8 +963,8 @@ BarWidget {
 
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "←→ select · letter paints (again for the next match) · o source · "
-              + "d desktop · s saturate · S all · R reset · ⏎ TD picker · esc done"
+          text: "←→ select · letter picks a theme (again for the next match) · "
+              + "␣ saturate · ⌫ desktop · S all · R reset · ⏎ TD picker · esc done"
           color: Color.menu.text
           opacity: 0.5
           font.family: Style.font.menuFamily
