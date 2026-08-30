@@ -595,8 +595,8 @@ BarWidget {
               // the ⟲ card first: back to whatever the desktop theme says.
               // Lit while the tile follows the desktop (no recorded variant).
               Rectangle {
-                width: Style.space(64)
-                height: Style.space(64)
+                width: Style.space(70)
+                height: Style.space(70)
                 radius: Style.cornerRadius
                 color: onDesktop ? Color.menu.selectedBackground : "transparent"
                 border.color: Color.menu.border
@@ -610,16 +610,32 @@ BarWidget {
                     color: onDesktop ? Color.menu.selectedText : Color.menu.text
                     font.pixelSize: Style.font.heading
                   }
-                  Text {
+                  // The key IS the label. Same two-Text mechanism as the
+                  // variant cards below — the ⟲ card's name is ours and could
+                  // safely be rich text, but a picker where one tile is drawn
+                  // by a different code path is a picker where one tile drifts.
+                  Row {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    // the key IS the label — d, worn big, bold and underlined
-                    textFormat: Text.RichText
-                    text: "<span style=\"font-size:" + (Style.font.caption + 4)
-                      + "px\"><b><u>D</u></b></span>ESKTOP"
-                    color: onDesktop ? Color.menu.selectedText : Color.menu.text
-                    opacity: onDesktop ? 1 : 0.65
-                    font.family: Style.font.menuFamily
-                    font.pixelSize: Style.font.caption
+                    Text {
+                      id: dInitial
+                      textFormat: Text.PlainText
+                      text: "D"
+                      color: onDesktop ? Color.menu.selectedText : Color.menu.text
+                      opacity: 1
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.caption + 7
+                      font.weight: Font.Black
+                      font.underline: true
+                    }
+                    Text {
+                      anchors.baseline: dInitial.baseline
+                      textFormat: Text.PlainText
+                      text: "ESKTOP"
+                      color: onDesktop ? Color.menu.selectedText : Color.menu.text
+                      opacity: onDesktop ? 0.8 : 0.55
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.caption
+                    }
                   }
                 }
                 MouseArea {
@@ -639,8 +655,8 @@ BarWidget {
                   // which is what makes Qt.alpha below safe to call
                   readonly property color acc: modelData.accent
                   readonly property bool lit: modelData.key === pickedNow
-                  width: Style.space(64)
-                  height: Style.space(64)
+                  width: Style.space(70)
+                  height: Style.space(70)
                   radius: Style.cornerRadius
                   // the variant's own two colours ARE the data being chosen —
                   // this border is content, not chrome; the current pick gets
@@ -660,23 +676,27 @@ BarWidget {
                       font.pixelSize: Style.font.heading
                     }
                     // Press the FIRST LETTER to paint, so the first letter is
-                    // the loud one: bold, underlined, four points up. Two plain
-                    // Text items rather than one rich one — the label is built
-                    // from a name written in another repository, and a draw
-                    // path that never assembles markup cannot be made to render
-                    // any. The typography is identical; only the mechanism moved
-                    // from a string of HTML to the font properties themselves.
+                    // drawn the way it is pressed: seven points up, Black
+                    // weight, underlined, at full strength, and inked in the
+                    // variant's OWN accent so the key also previews the colour
+                    // it applies. The rest of the name falls back to caption
+                    // size at 0.6 — the contrast is the point, and a name is
+                    // only there to confirm what the glyph already said.
+                    //
+                    // Two plain Text items rather than one rich one: the label
+                    // is a name written in another repository, and a draw path
+                    // that never assembles markup cannot be made to render any.
                     Row {
                       anchors.horizontalCenter: parent.horizontalCenter
                       Text {
                         id: initial
                         textFormat: Text.PlainText
                         text: modelData.key.charAt(0).toUpperCase()
-                        color: Color.menu.text
-                        opacity: 0.85
+                        color: acc
+                        opacity: 1
                         font.family: Style.font.menuFamily
-                        font.pixelSize: Style.font.caption + 4
-                        font.bold: true
+                        font.pixelSize: Style.font.caption + 7
+                        font.weight: Font.Black
                         font.underline: true
                       }
                       Text {
@@ -684,14 +704,14 @@ BarWidget {
                         textFormat: Text.PlainText
                         text: modelData.key.slice(1).toUpperCase()
                         color: Color.menu.text
-                        opacity: 0.85
+                        opacity: lit ? 0.8 : 0.6
                         font.family: Style.font.menuFamily
                         font.pixelSize: Style.font.caption
                       }
                     }
                     Rectangle {
                       anchors.horizontalCenter: parent.horizontalCenter
-                      width: Style.space(34)
+                      width: Style.space(38)
                       height: Style.space(3)
                       radius: Style.space(1)
                       color: modelData.partner
