@@ -1,61 +1,101 @@
 # Terminal Paint
 
-**Give every terminal on the workspace its own Omarchy theme.**
+**Give every terminal on the workspace its own Omarchy theme — and its own tube.**
 
-Click the palette in the bar and each terminal tile grows a picker card
-holding every theme installed on the box — Osaka Jade, Vantablack, Tokyo
-Night, whatever you have — each drawn as a small terminal in that theme's own
-background, accent and foreground. Click one and *that tile* wears it. Same
-colours the theme grid would put on the whole desktop; the only difference is
-how far they reach.
+![Terminal Paint over three terminal tiles](docs/overlay.png)
 
-A rail across the top does the workspace at once: SATURATE ALL and RESET
-DEFAULTS.
+Click the palette in the bar and each terminal tile grows a picker card holding
+every theme installed on the box — Osaka Jade, Vantablack, Tokyo Night,
+whatever you have. Click one and *that tile* wears it. Same colours the theme
+grid would put on the whole desktop; the only difference is how far they reach.
+
+Each card **is** its theme: filled with that theme's background, ruled with its
+accent and foreground, and labelled in the colour that theme writes text in. If
+the name is hard to read on the card, the terminal will be hard to read too, and
+you have learned that before clicking rather than after.
+
+A rail across the top acts on every tile at once: **SATURATE ALL**, **CRT ALL**,
+**RESET DEFAULTS** — and it tells you how many themes this machine has, which one
+the desktop is wearing, and that `F5` re-reads the list without closing.
 
 - **foot / Alacritty / kitty / Ghostty / WezTerm** — the card floats over the
-  window; a pick runs `td-tint --window <address> --theme <name>`, which
-  writes that theme's OSC palette down the terminal's own tty and puts the
-  matching gradient on its window border. Runtime-only, dies with the window;
-  the ⟲ DESKTOP card hands the tile back to the desktop theme.
+  window; a pick runs `td-tint --window <address> --theme <name>`, which writes
+  that theme's OSC palette down the terminal's own tty and puts the matching
+  gradient on its window border. Runtime-only, dies with the window; the ⟲
+  DESKTOP card hands the tile back to the desktop theme.
 - **Terminal Delight** — its story is better than a window tint (per-pane,
   persistent, CRT-identity-preserving), so its card is a single handoff that
-  raises TD's own in-app pane picker over its control socket and gets out of
-  the way.
+  raises TD's own in-app pane picker over its control socket and gets out of the
+  way.
 
 Esc, or a click on the dimmed background, or a second click on the palette:
 brushes away everywhere.
+
+## The tube, per tile
+
+Terminal Delight's desktop half draws every window as curved glass — a barrel
+warp and a glass glare, one tube per window. **CRT** turns that on or off for
+one tile; **CRT ALL** does the workspace.
+
+It works because of where the warp lives. `shaders/surface.frag` compiles its
+warp and glare only into the *rounded-window* variant, so a window's rounding
+radius is its CRT power switch. That is not a trick — it is the only live lever
+there is. Hyprland reads window shaders once at startup, so the shader itself
+cannot be swapped while you are looking at it, and the screen shader can only be
+swapped at the cost of wedging `wlr-screencopy` for hours. Rounding is a
+per-window property the compositor already honours, live, per window, and it is
+exactly the one the shader keys off.
+
+On a box where that warp is not installed, the CRT switches are **absent** rather
+than present and inert. `td-tint --state` reports whether the shader is there.
+
+## The list is this machine's, right now
+
+There is no bundled theme list and nothing is cached. `td-tint --state` globs the
+theme directories at the moment you press the key, so a theme installed a minute
+ago is on the grid and one uninstalled a minute ago is gone. The rail prints the
+count, which is that guarantee said out loud rather than promised in a README.
+
+`F5` re-reads without closing — for when the `omarchy theme install` happened in
+the window behind this overlay.
+
+The theme the desktop itself is wearing is **marked**, not hidden. It is a
+perfectly good thing to paint a tile with, and knowing which card it is turns the
+grid from a wall of colours into a set of deviations from something.
 
 ## What this plugin runs, reads, and sends
 
 Plugins are unsandboxed, so here is the whole footprint:
 
 - **Runs, on summon:** one command — `td-tint --state`, the oracle that reports
-  the installed themes and where the terminal tiles are. **Runs, on a card
-  click:** `td-tint --window …` or `terminal-delight ctl paint …`. **Runs, on an
-  empty workspace:** one transient `notify-send` saying so. Nothing resident,
-  nothing polled.
+  the installed themes, the desktop's own theme, whether the warp is installed,
+  and where the terminal tiles are. **Runs, on a card click or a switch:**
+  `td-tint --window …` (`--theme`, `--clear`, `--saturate`, `--crt`) or
+  `terminal-delight ctl paint …`. **Runs, on an empty workspace:** one transient
+  `notify-send` saying so. Nothing resident, nothing polled.
 - **Every one of those is an argv array.** No `bash -c`, no shell string, no
-  string-form `execDetached` anywhere in the file — there is no place for a
-  word to be re-split or re-interpreted on its way to a process.
+  string-form `execDetached` anywhere in the file — there is no place for a word
+  to be re-split or re-interpreted on its way to a process.
 - **Reads:** nothing beyond those command outputs. **Writes:** nothing.
   **Network:** none, ever.
-- While the overlay is up it holds exclusive keyboard focus (that is what
-  makes Esc work); it releases everything on dismiss.
+- While the overlay is up it holds exclusive keyboard focus (that is what makes
+  Esc work); it releases everything on dismiss.
 
 ### What it trusts, and what it checks
 
-The theme list is not ours in any sense. The names are **directory names**
-from `~/.config/omarchy/themes` and Omarchy's own share — anyone's, including
-a theme cloned from a stranger's repo an hour ago — and the colours are
-whatever that theme's `colors.toml` says. It reaches this plugin over a pipe,
-so `--state` output is treated as third-party input and normalised by one
-function at one boundary before anything downstream sees it:
+The theme list is not ours in any sense. The names are **directory names** from
+`~/.config/omarchy/themes` and Omarchy's own share — anyone's, including a theme
+cloned from a stranger's repo an hour ago — and the colours are whatever that
+theme's `colors.toml` says. It reaches this plugin over a pipe, so `--state`
+output is treated as third-party input and normalised by one function at one
+boundary before anything downstream sees it:
 
 | Field | Accepted | Why it matters |
 |---|---|---|
 | `key` | `^[a-z0-9][a-z0-9-]{0,31}$` | it is an argv word — so it may carry no markup, and may never begin with `-` |
 | `label` | plain text, ≤ 28 chars, control characters stripped | drawn, never executed; it is also the letter the keyboard matches |
-| `accent`, `partner`, `bg`, `fg` | `#rgb` / `#rrggbb` / `#aarrggbb` | they land in a string→color coercion |
+| `accent`, `partner`, `bg`, `fg` | `#rgb` / `#rrggbb` / `#aarrggbb` | they land in a string→color coercion, and `bg` is drawn across a whole card |
+| `desktop_theme` | the same `key` regex | it decides which card gets marked, so it gets the same gate as a card |
 | window address | `^0x[0-9a-f]{1,16}$` | it is the argv word behind `--window`, and a filename inside `td-tint`'s run dir |
 
 A record that does not fit is dropped, not repaired. Card labels are built from
@@ -66,11 +106,14 @@ gated on the collector draining rather than on a timer, and a document past
 
 ## Requirements
 
-- **`td-tint`** on `PATH`, current enough to report `themes` from
-  `td-tint --state` and accept `--theme`
+- **`td-tint`** on `PATH`, current enough to report `themes`, `crt` and
+  `desktop_theme` from `td-tint --state` and to accept `--theme` and `--crt`
   ([omarchy-terminal-delight-theme](https://github.com/parker-brown-family/omarchy-terminal-delight-theme)
-  → `./install-variants.sh` installs it).
-- For Terminal Delight windows: a `terminal-delight` build with the control
+  **v0.3.0 or later** → `./install-variants.sh` installs it).
+- **For the CRT switches:** the per-window warp, from that same repo's
+  `./install-curve.sh`. Hyprland reads window shaders at startup, so it takes
+  effect at your next login. Without it the switches are simply not drawn.
+- **For Terminal Delight windows:** a `terminal-delight` build with the control
   socket (`feat/td-paint-mode` or later). Terminals started from older builds
   can't be reached — reopen them.
 
@@ -101,31 +144,35 @@ While the overlay is up it plays entirely from the keyboard:
 | ← → ↑ ↓ / Tab | walk the tiles in reading order |
 | any letter | paint the selected tile with the first theme whose name starts with it; press it again to walk to the next match |
 | Space | toggle SATURATE on the selected tile |
+| ⇧ Space | toggle CRT on the selected tile |
 | Backspace | hand the selected tile back to the desktop theme |
 | S | toggle SATURATE ALL |
+| C | toggle CRT ALL |
 | R | reset every tile to defaults |
+| F5 | re-read the theme list without closing |
 | ⏎ | Terminal Delight's own pane picker |
 | Esc | done — brushes away everywhere |
 
-**Letters are names, everything else is a verb.** Every lowercase letter
-belongs to a theme, so no verb may take one: `s` would have stolen
-`solitude`, `o` would have stolen `osaka-jade`, and `d` was safe only until
-someone installs `dracula`. The two workspace-wide verbs sit on shifted
-letters, which the name matcher never sees.
+**Letters are names, everything else is a verb.** Every lowercase letter belongs
+to a theme, so no verb may take one: `s` would have stolen `solitude`, `o` would
+have stolen `osaka-jade`, and `d` was safe only until someone installs `dracula`.
+The workspace-wide verbs sit on shifted letters, which the name matcher never
+sees, and the two per-tile switches share one key because Shift is what makes it
+the other switch.
 
 ## The three repos
 
 | Repo | What it is |
 |---|---|
 | [**terminal-delight**](https://github.com/parker-brown-family/terminal-delight) | the terminal itself — GPU-native, Rust, tiling panes, per-pane grading |
-| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the variant set, the compositor curve, and `td-tint` |
+| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the palette set, the compositor curve, and `td-tint` |
 | [**omarchy-td-palette**](https://github.com/parker-brown-family/omarchy-td-palette) | *Terminal Paint* — this repo, the 🎨 bar widget |
 
-This one is the thinnest: a single QML file that renders what
-`td-tint --state` reports and shells out to `td-tint` to act. It authors no
-colours and holds no state. That is also why it validates everything it reads
-— the variant set is written in the theme repo, which makes it third-party
-input here.
+This one is the thinnest: a single QML file that renders what `td-tint --state`
+reports and shells out to `td-tint` to act. It authors no colours, installs no
+shaders and holds no state. That is also why it validates everything it reads —
+the theme list belongs to whoever installed those themes, which makes it
+third-party input here.
 
 ## Install
 
@@ -137,8 +184,8 @@ omarchy plugin add https://github.com/parker-brown-family/omarchy-td-palette.git
 quickshell 0.3.1, *any* write under `~/.config/omarchy/plugins/` while the
 session is locked hot-reloads the shell, which tears down the live session lock
 and aborts the shell under the lockscreen. Installing or updating anything is
-such a write. The screen stays locked and the shell relaunches on its own, so
-you lose the bar for a few seconds rather than your session — but
+such a write. The screen stays locked and the shell relaunches on its own, so you
+lose the bar for a few seconds rather than your session — but
 `omarchy-restart-shell` will then refuse to help you, because it declines to
 restart a locked session.
 
@@ -156,6 +203,15 @@ omarchy plugin remove brownfamilysports.td-palette --yes
 ```
 
 Runtime tints die with their windows; the plugin itself writes no state and
-leaves nothing behind.
+leaves nothing behind. A tile whose CRT you switched off returns to the desktop's
+rounding the moment you clear it, or when its window closes.
+
+## The screenshots
+
+`bin/shoot` builds the pictures in this README. It stages a workspace of its own
+— three fresh terminals, each already wearing a different theme — raises the
+overlay, captures it, and puts you back where you were. Shooting the live desktop
+instead would put whatever happens to be on screen into a public README, which is
+the kind of mistake you only make once.
 
 MIT.

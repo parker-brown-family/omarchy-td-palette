@@ -672,19 +672,16 @@ BarWidget {
         width: model.tw
         height: model.th
 
-        // the spotlight: unselected tiles wear TWO extra coats of the theme's
-        // own scrim (three with the base), the selected one only the base —
-        // the lit tile reads from across the room
+        // The spotlight: unselected tiles wear an extra coat of the theme's
+        // own scrim, the selected one none, so the lit tile reads from across
+        // the room. It used to be two full coats, and on a six-tile workspace
+        // that was not a spotlight — it was a blackout, with five unreadable
+        // cards and no way to compare them. Half a coat separates them; a
+        // whole one hides them.
         Rectangle {
           anchors.fill: parent
           color: Color.menu.scrim
-          opacity: tileSel ? 0 : 1
-          Behavior on opacity { NumberAnimation { duration: 120 } }
-        }
-        Rectangle {
-          anchors.fill: parent
-          color: Color.menu.scrim
-          opacity: tileSel ? 0 : 1
+          opacity: tileSel ? 0 : 0.55
           Behavior on opacity { NumberAnimation { duration: 120 } }
         }
 
@@ -704,7 +701,7 @@ BarWidget {
         Rectangle {
           id: card
           anchors.centerIn: parent
-          width: Math.min(parent.width - Style.space(24), Style.space(620))
+          width: Math.min(parent.width - Style.space(24), Style.space(740))
           height: content.implicitHeight + Style.spacing.panelPadding * 2
           radius: Style.cornerRadius
           color: Color.menu.background
@@ -713,8 +710,8 @@ BarWidget {
           // exactly backward — it vanishes into the card fill)
           border.color: tileSel ? Color.menu.text : Color.menu.border
           border.width: tileSel ? 3 : Math.max(1, Style.space(1))
-          opacity: tileSel ? 1 : 0.3
-          scale: tileSel ? 1 : 0.94
+          opacity: tileSel ? 1 : 0.62
+          scale: tileSel ? 1 : 0.96
           Behavior on opacity { NumberAnimation { duration: 120 } }
           Behavior on scale { NumberAnimation { duration: 120 } }
 
@@ -788,8 +785,8 @@ BarWidget {
                 // the ⟲ card first: back to whatever the desktop theme says.
                 // Lit while the tile follows the desktop (no recorded variant).
                 Rectangle {
-                  width: Style.space(78)
-                  height: Style.space(78)
+                  width: Style.space(112)
+                  height: Style.space(96)
                   radius: Style.cornerRadius
                   color: onDesktop ? Color.menu.selectedBackground : "transparent"
                   border.color: Color.menu.border
@@ -858,50 +855,53 @@ BarWidget {
                     // with, and knowing which one it is turns the grid into a
                     // set of deviations from something rather than a wall.
                     readonly property bool isDesktop: modelData.key === root.desktopTheme
-                    width: Style.space(78)
-                    height: Style.space(78)
+                    width: Style.space(112)
+                    height: Style.space(96)
                     radius: Style.cornerRadius
-                    // the entry's own two colours ARE the data being chosen —
-                    // this border is content, not chrome; the current pick gets
-                    // a thicker ring and a wash of its own accent
-                    color: lit ? Qt.alpha(acc, 0.16) : "transparent"
-                    border.color: acc
-                    border.width: lit ? 2 : 1
+                    // THE CARD IS THE THEME. Its fill is that theme's own
+                    // background and its text is that theme's own foreground,
+                    // so the card is not a label for a colour scheme — it is a
+                    // small worked example of one, and a light theme looks
+                    // light from across the room.
+                    //
+                    // The first cut drew a 36x26 chip on a transparent card and
+                    // it did not survive contact with a real box: twenty-three
+                    // near-black chips at that size are twenty-three identical
+                    // grey rectangles, and the grid could not be read at all.
+                    color: modelData.bg
+                    border.color: lit ? acc
+                                      : (isDesktop ? Color.menu.text : Qt.alpha(acc, 0.65))
+                    border.width: lit ? 3 : (isDesktop ? 2 : 1)
+                    // A theme gets no glyph and should not be given one: what
+                    // tells Osaka Jade from Tokyo Night IS the colour. So the
+                    // card draws three lines of "code" in the theme's own
+                    // accent, foreground and partner — the thing the card
+                    // actually does — and writes the name underneath in that
+                    // same foreground. If the name is hard to read on the
+                    // card, the terminal will be hard to read too, and you
+                    // have learned that before clicking rather than after.
                     Column {
-                      anchors.centerIn: parent
-                      spacing: Style.space(2)
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      anchors.leftMargin: Style.space(12)
+                      anchors.rightMargin: Style.space(12)
+                      spacing: Style.space(5)
 
-                      // A theme gets no glyph and should not be given one: what tells
-                      // Osaka Jade from Tokyo Night IS the colour. So the face is a small
-                      // terminal drawn in the theme's own background, accent and
-                      // foreground — the thing the card actually does, rather than a face
-                      // invented for it.
                       Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: Style.space(36)
-                        height: Style.space(26)
-                        radius: Style.space(4)
-                        color: modelData.bg
-                        border.color: cardTile.isDesktop ? Color.menu.text
-                                                         : Qt.alpha(cardTile.acc, 0.55)
-                        border.width: cardTile.isDesktop ? 2 : 1
-                        Column {
-                          anchors.centerIn: parent
-                          spacing: Style.space(3)
-                          Rectangle {
-                            width: Style.space(19); height: Style.space(3)
-                            radius: Style.space(2); color: cardTile.acc
-                          }
-                          Rectangle {
-                            width: Style.space(13); height: Style.space(3)
-                            radius: Style.space(2); color: modelData.fg
-                          }
-                          Rectangle {
-                            width: Style.space(16); height: Style.space(3)
-                            radius: Style.space(2); color: modelData.partner
-                          }
-                        }
+                        width: parent.width * 0.86; height: Style.space(4)
+                        radius: Style.space(2); color: cardTile.acc
                       }
+                      Rectangle {
+                        width: parent.width * 0.58; height: Style.space(4)
+                        radius: Style.space(2); color: modelData.fg; opacity: 0.9
+                      }
+                      Rectangle {
+                        width: parent.width * 0.72; height: Style.space(4)
+                        radius: Style.space(2); color: modelData.partner
+                      }
+
+                      Item { width: 1; height: Style.space(6) }
                       // Press the FIRST LETTER to paint, so the first letter is
                       // drawn the way it is pressed: seven points up, Black
                       // weight, underlined, at full strength, and inked in the
@@ -913,16 +913,21 @@ BarWidget {
                       // Two plain Text items rather than one rich one: the label
                       // is a name written in another repository, and a draw path
                       // that never assembles markup cannot be made to render any.
+                      // The letter you press, in the theme's accent, ahead of
+                      // the rest of the name in the theme's foreground. Two
+                      // plain Text items rather than one rich one: the name is
+                      // a directory on someone else's machine, and a draw path
+                      // that never assembles markup cannot be made to render
+                      // any.
                       Row {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
                         Text {
                           id: initial
                           textFormat: Text.PlainText
                           text: modelData.label.charAt(0).toUpperCase()
-                          color: acc
-                          opacity: 1
+                          color: cardTile.acc
                           font.family: Style.font.menuFamily
-                          font.pixelSize: Style.font.caption + 7
+                          font.pixelSize: Style.font.caption + 5
                           font.weight: Font.Black
                           font.underline: true
                         }
@@ -930,25 +935,35 @@ BarWidget {
                           anchors.baseline: initial.baseline
                           textFormat: Text.PlainText
                           text: modelData.label.slice(1).toUpperCase()
-                          color: Color.menu.text
-                          opacity: lit ? 0.8 : 0.6
+                          color: modelData.fg
+                          opacity: lit ? 1 : 0.85
                           font.family: Style.font.menuFamily
                           font.pixelSize: Style.font.caption
-                          // Theme names run long where palette keys never did
-                          // (`catppuccin-latte` is sixteen characters). Elide
-                          // inside the card rather than let one name set the
-                          // width of every card in the grid.
-                          width: Math.max(0, cardTile.width - initial.width - Style.space(8))
+                          // `catppuccin-latte` is sixteen characters where a
+                          // palette key was never more than nine. Elide inside
+                          // the card rather than let one name set the width of
+                          // every card in the grid.
+                          width: Math.max(0, parent.width - initial.width)
                           elide: Text.ElideRight
                         }
                       }
-                      Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: Style.space(38)
-                        height: Style.space(3)
-                        radius: Style.space(1)
-                        color: modelData.partner
-                      }
+                    }
+
+                    // The theme the desktop is wearing, named on the card that
+                    // is wearing it. A ring alone said "this one is different"
+                    // without saying how.
+                    Text {
+                      visible: cardTile.isDesktop
+                      anchors.top: parent.top
+                      anchors.right: parent.right
+                      anchors.margins: Style.space(6)
+                      textFormat: Text.PlainText
+                      text: "DESKTOP"
+                      color: modelData.fg
+                      opacity: 0.75
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.caption - 3
+                      font.letterSpacing: Style.space(1)
                     }
                     MouseArea {
                       anchors.fill: parent

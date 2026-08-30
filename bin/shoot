@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Photograph the overlay for the README, on a workspace built for the purpose.
+#
+# The point of a screenshot of a painter is the PAINT, so this stages a
+# workspace it can control: three fresh terminals showing colour, each already
+# wearing a different Omarchy theme, then raises the overlay and captures it.
+# Shooting the live desktop instead would put whatever happens to be on screen
+# — someone's mail, someone's diff — into a public README.
+#
+#   bin/shoot                 stage, capture to docs/, tear down
+#   bin/shoot --keep          leave the staged workspace up
+#
+# It returns you to the workspace you started on, always.
+set -uo pipefail
+
+OUT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs}"
+[[ $OUT == --* ]] && OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs"
+KEEP=""
+for a in "$@"; do [[ $a == --keep ]] && KEEP=1; done
+
+WS=7                       # far from anything in daily use
+THEMES=(osaka-jade vantablack tokyo-night)
+HOME_WS="$(hyprctl activeworkspace -j | jq -r '.id')"
+
+need() { command -v "$1" >/dev/null || { echo "need $1" >&2; exit 1; }; }
+need hyprctl; need grim; need jq; need foot
+
+cleanup() {
+  if [[ -z $KEEP ]]; then
+    while IFS= read -r a; do
+      [[ -n $a ]] || continue
+      hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1
+    done < <(hyprctl clients -j | jq -r --argjson w "$WS" '.[] | select(.workspace.id == $w) | .address')
+  fi
+  hyprctl dispatch "hl.dsp.focus({ workspace = $HOME_WS })" >/dev/null 2>&1
+}
+trap cleanup EXIT
+
+mkdir -p "$OUT"
+# Hyprland 0.56: `hl.dsp.workspace` is a table of workspace OPERATIONS
+# (move, rename, change_id) — going to one is a focus, not an operation.
+hyprctl dispatch "hl.dsp.focus({ workspace = $WS })" >/dev/null 2>&1
+sleep 0.4
+
+# Something with colour in it, and no content that is anyone's business. Each
+# pane prints the palette it is wearing, which is also the thing the shot is
+# meant to show.
+demo="$(mktemp)"
+cat >"$demo" <<'SH'
+printf '\n  \033[1mTerminal Delight\033[0m — this terminal wears its own theme\n\n'
+for i in 1 2 3 4 5 6; do printf '  \033[4%dm    \033[0m' "$i"; done; printf '\n'
+for i in 1 2 3 4 5 6; do printf '  \033[3%dm████\033[0m' "$i"; done; printf '\n\n'
+printf '  $ td-tint --theme osaka-jade\n  $ td-tint --window 0x… --crt off\n\n'
+exec sleep 600
+SH
+
+for _ in 1 2 3; do
+  setsid foot --title "terminal-paint-shot" bash --rcfile "$demo" -i >/dev/null 2>&1 &
+  sleep 0.7
+done
+sleep 1.2
+
+# Give each tile a different theme, so the shot shows what the plugin is for
+# rather than three identical windows.
+i=0
+while IFS= read -r a; do
+  [[ -n $a ]] || continue
+  td-tint --window "$a" --theme "${THEMES[$((i % ${#THEMES[@]}))]}" >/dev/null 2>&1
+  i=$((i + 1))
+done < <(hyprctl clients -j | jq -r --argjson w "$WS" '.[] | select(.workspace.id == $w) | .address')
+sleep 0.6
+
+omarchy-shell brownfamilysports.td-palette open >/dev/null 2>&1
+sleep 1.6
+grim "$OUT/overlay.png"
+omarchy-shell brownfamilysports.td-palette close >/dev/null 2>&1
+sleep 0.5
+grim "$OUT/workspace.png"
+
+# Web sizes, because a 3840x2160 PNG is eight megabytes of README nobody can
+# see at once. The hero is halved; the marketplace preview is the rail plus one
+# whole tile, which is the part that explains what the plugin is for.
+if command -v magick >/dev/null || command -v convert >/dev/null; then
+  M="$(command -v magick || command -v convert)"
+  "$M" "$OUT/overlay.png"   -resize 1920x -strip "$OUT/overlay.png"
+  "$M" "$OUT/workspace.png" -resize 1920x -strip "$OUT/workspace.png"
+  "$M" "$OUT/overlay.png" -crop 1300x790+100+25 +repage -resize 1400x -strip \
+    "$(dirname "$OUT")/preview.png"
+  echo "wrote $(dirname "$OUT")/preview.png"
+fi
+
+rm -f "$demo"
+echo "wrote $OUT/overlay.png and $OUT/workspace.png"
