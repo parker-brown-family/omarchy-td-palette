@@ -47,10 +47,18 @@ sleep 0.4
 # meant to show.
 demo="$(mktemp)"
 cat >"$demo" <<'SH'
-printf '\n  \033[1mTerminal Delight\033[0m — this terminal wears its own theme\n\n'
+printf '\n  \033[1mTerminal Delight\033[0m — one tube per window\n\n'
 for i in 1 2 3 4 5 6; do printf '  \033[4%dm    \033[0m' "$i"; done; printf '\n'
 for i in 1 2 3 4 5 6; do printf '  \033[3%dm████\033[0m' "$i"; done; printf '\n\n'
-printf '  $ td-tint --theme osaka-jade\n  $ td-tint --window 0x… --crt off\n\n'
+printf '  \033[32m$\033[0m td-tint --theme osaka-jade\n'
+printf '  \033[32m$\033[0m td-tint --window 0x… --crt off\n'
+printf '  \033[32m$\033[0m td-tint --themes | wc -l\n  23\n\n'
+printf '  \033[36m#\033[0m the warp compiles into the rounded-window variant,\n'
+printf '  \033[36m#\033[0m so a window rounding radius IS its CRT switch.\n\n'
+for r in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  printf '  \033[90m%02d\033[0m  \033[34mfn\033[0m \033[33mpaint\033[0m(tile: \033[36m&Tile\033[0m) -> \033[35mResult\033[0m<()> {\n' "$r"
+done
+printf '\n'
 exec sleep 600
 SH
 
@@ -86,7 +94,13 @@ if command -v magick >/dev/null || command -v convert >/dev/null; then
   "$M" "$OUT/workspace.png" -resize 1920x -strip "$OUT/workspace.png"
   "$M" "$OUT/overlay.png" -crop 1300x790+100+25 +repage -resize 1400x -strip \
     "$(dirname "$OUT")/preview.png"
-  echo "wrote $(dirname "$OUT")/preview.png"
+  # The tube itself, which the overlay cannot show: layer-shell surfaces are
+  # not warped, so a shot OF the picker never contains the thing the CRT
+  # switch turns on. This crop is a bare pane — bowed lines, glare hotspot
+  # top-left — which is the only honest picture of it.
+  "$M" "$OUT/workspace.png" -crop 470x300+28+55 +repage -resize 1000x -strip \
+    "$OUT/tube.png"
+  echo "wrote $(dirname "$OUT")/preview.png and $OUT/tube.png"
 fi
 
 rm -f "$demo"

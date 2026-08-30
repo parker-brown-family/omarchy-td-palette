@@ -33,16 +33,23 @@ brushes away everywhere.
 
 ## The tube, per tile
 
+![a terminal pane behind the barrel warp, with the glare hotspot top-left](docs/tube.png)
+
 Terminal Delight's desktop half draws every window as curved glass — a barrel
 warp and a glass glare, one tube per window. **CRT** turns that on or off for
 one tile; **CRT ALL** does the workspace.
 
+(The overlay screenshot above cannot show this: layer-shell surfaces are not
+warped, so a picture *of* the picker never contains the thing the switch turns
+on. This is a bare pane.)
+
 It works because of where the warp lives. `shaders/surface.frag` compiles its
 warp and glare only into the *rounded-window* variant, so a window's rounding
 radius is its CRT power switch. That is not a trick — it is the only live lever
-there is. Hyprland reads window shaders once at startup, so the shader itself
-cannot be swapped while you are looking at it, and the screen shader can only be
-swapped at the cost of wedging `wlr-screencopy` for hours. Rounding is a
+there is. A window shader is loaded with Hyprland's config, so swapping it
+means editing a file and reloading the compositor — not something a picker can
+do per tile, per click — and the *screen* shader can only be swapped at the
+cost of wedging `wlr-screencopy` for hours. Rounding is a
 per-window property the compositor already honours, live, per window, and it is
 exactly the one the shader keys off.
 
@@ -111,8 +118,8 @@ gated on the collector draining rather than on a timer, and a document past
   ([omarchy-terminal-delight-theme](https://github.com/parker-brown-family/omarchy-terminal-delight-theme)
   **v0.3.0 or later** → `./install-variants.sh` installs it).
 - **For the CRT switches:** the per-window warp, from that same repo's
-  `./install-curve.sh`. Hyprland reads window shaders at startup, so it takes
-  effect at your next login. Without it the switches are simply not drawn.
+  `./install-curve.sh` — which reloads Hyprland for you, no relogin. Without
+  it the switches are simply not drawn.
 - **For Terminal Delight windows:** a `terminal-delight` build with the control
   socket (`feat/td-paint-mode` or later). Terminals started from older builds
   can't be reached — reopen them.
