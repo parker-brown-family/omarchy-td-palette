@@ -30,6 +30,17 @@ import qs.Ui
 // desktop from — and Terminal Delight is IN it, as one theme, so nothing is
 // out of reach. `td-tint cherry` still wears a palette from a prompt.
 //
+// The list is read fresh on every summon — `td-tint --state` globs the theme
+// directories at the moment you press the key, so a theme installed a minute
+// ago is on the card grid, and one uninstalled a minute ago is not. F5 re-reads
+// without closing, for when the install happened in the window behind this one.
+//
+// Each tile also has a TUBE: the barrel warp and glass glare that
+// `shaders/surface.frag` draws for any window with a rounding radius. That
+// makes rounding the switch, and it is the only live one — Hyprland reads
+// window shaders once at startup. So CRT is per tile, and CRT ALL is the
+// workspace, exactly as SATURATE is.
+//
 // The practical dividend: every lowercase letter belongs to a theme NAME. A
 // verb bound to one steals it — `o` was the source switch and `osaka-jade`
 // wanted it, `s` was saturate and `solitude` wanted it, and `d` was safe only
@@ -69,6 +80,16 @@ BarWidget {
   // What a summon snapshot found: the installed themes, and the terminal tiles
   // (monitor-local rects) of the active workspace.
   property var cards: []
+
+  // The theme the desktop is wearing at the moment of the snapshot. The card
+  // that matches is marked, so the grid says what you are deviating FROM
+  // rather than making you remember it.
+  property string desktopTheme: ""
+
+  // Whether the per-window warp is installed at all. A CRT switch on a box
+  // without `shaders/surface.frag` would be a control that does nothing, so
+  // the overlay says why instead of drawing one.
+  property bool crtAvailable: false
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -117,6 +138,7 @@ BarWidget {
     tileModel.setProperty(i, "src", src === undefined ? "omarchy" : src)
   }
   function markSat(i, on) { tileModel.setProperty(i, "sat", on); root.refreshAllSat() }
+  function markCrt(i, on) { tileModel.setProperty(i, "crt", on); root.refreshAllCrt() }
 
   // The workspace-wide crank state the global toggle shows: ON only when
   // every paintable tile is cranked. ListModel edits don't re-run bindings,
@@ -131,6 +153,19 @@ BarWidget {
       if (!t.sat) all = false
     }
     root.allSat = anyOsc && all
+  }
+
+  // Same rule for the tube: ON only when every paintable tile has it.
+  property bool allCrt: false
+  function refreshAllCrt() {
+    var any = false, all = true
+    for (var i = 0; i < tileModel.count; i++) {
+      var t = tileModel.get(i)
+      if (t.td) continue
+      any = true
+      if (!t.crt) all = false
+    }
+    root.allCrt = any && all
   }
 
   // One switch, everywhere: label + a chunky track that SAYS which state it
@@ -248,6 +283,7 @@ BarWidget {
     Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
     root.markPicked(root.sel, "-", "")
     root.markSat(root.sel, false)
+    root.markCrt(root.sel, root.crtAvailable)
   }
   function satSel() {
     var t = tileModel.get(root.sel)
@@ -261,6 +297,23 @@ BarWidget {
     Quickshell.execDetached(["terminal-delight", "ctl", "paint", "on", "--pid", String(t.pid)])
     root.paintDismiss(true)
   }
+  function crtSel() {
+    var t = tileModel.get(root.sel)
+    if (!t || t.td || !root.crtAvailable) return
+    Quickshell.execDetached(["td-tint", "--window", t.address, "--crt", t.crt ? "off" : "on"])
+    root.markCrt(root.sel, !t.crt)
+  }
+  function crtAll(on) {
+    if (!root.crtAvailable) return
+    for (var i = 0; i < tileModel.count; i++) {
+      var t = tileModel.get(i)
+      if (t.td) continue
+      Quickshell.execDetached(["td-tint", "--window", t.address, "--crt", on ? "on" : "off"])
+      root.markCrt(i, on)
+    }
+  }
+  function crtAllToggle() { root.crtAll(!root.allCrt) }
+
   function satAll(on) {
     for (var i = 0; i < tileModel.count; i++) {
       var t = tileModel.get(i)
@@ -279,6 +332,9 @@ BarWidget {
       Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
       root.markPicked(i, "-", "")
       root.markSat(i, false)
+      // --clear hands the tube back too, so the model has to say so or the
+      // rail's CRT ALL keeps claiming a state the tiles no longer hold.
+      root.markCrt(i, root.crtAvailable)
     }
   }
 
@@ -417,7 +473,8 @@ BarWidget {
     }
     if (!st || !st.tiles || !st.monitor) return
     console.log("td-paint: state — " + st.tiles.length + " tile(s), "
-                + (st.themes ? st.themes.length : 0) + " themes")
+                + (st.themes ? st.themes.length : 0) + " themes, crt="
+                + (st.crt && st.crt.available ? "available" : "unavailable"))
 
     // where the keyboard opens: on the tile you were just working in
     var focusAddr = st.focused || ""
@@ -440,6 +497,7 @@ BarWidget {
         th: t.size[1],
         picked: t.variant || "",
         src: t.source === "omarchy" ? "omarchy" : "",
+        crt: t.crt === true,
         sat: t.saturated === true
       })
     })
@@ -452,7 +510,13 @@ BarWidget {
       if (tiles[t].address === focusAddr) root.sel = t
     }
     root.refreshAllSat()
+    root.refreshAllCrt()
     root.cards = root.sanitizeCards(st.themes, "theme")
+    root.crtAvailable = !!(st.crt && st.crt.available === true)
+    // The desktop's theme is a key from the same list, so it gets the same
+    // regex — a name that could not be a card cannot be a marker either.
+    root.desktopTheme = (typeof st.desktop_theme === "string"
+                         && root.keyRe.test(st.desktop_theme)) ? st.desktop_theme : ""
 
     if (oscCount === 0 && anyTd) {
       // A pure Terminal Delight workspace needs no layer at all — hand the
@@ -563,12 +627,23 @@ BarWidget {
         // NAME, and `s` was already stealing `solitude`. Verbs live on keys
         // that can never be a name, and the two workspace-wide verbs stay on
         // SHIFTED letters, which the name-matching path never sees.
-        if (event.key === Qt.Key_Space) { root.satSel(); event.accepted = true; return }
+        // Shift makes it the OTHER switch on the same tile. Both are
+        // per-tile state, both are a toggle, and pairing them on one key is
+        // what keeps CRT off the alphabet.
+        if (event.key === Qt.Key_Space) {
+          if (event.modifiers & Qt.ShiftModifier) root.crtSel()
+          else root.satSel()
+          event.accepted = true; return
+        }
+        // The list is read fresh on every summon; F5 re-reads WITHOUT closing,
+        // for the theme you installed in the window behind this one.
+        if (event.key === Qt.Key_F5) { root.paintOpen(); event.accepted = true; return }
         if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
           root.clearSel(); event.accepted = true; return
         }
         var ch = event.text
         if (ch === "S") { root.satAllToggle(); event.accepted = true; return }
+        if (ch === "C") { root.crtAllToggle(); event.accepted = true; return }
         if (ch === "R") { root.resetAll(); event.accepted = true; return }
         if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
@@ -589,6 +664,7 @@ BarWidget {
         property string pickedNow: model.picked
         property string pickedSrc: model.src
         property bool satNow: model.sat
+        property bool crtNow: model.crt
         readonly property bool onDesktop: pickedNow === "" || pickedNow === "-"
         readonly property bool tileSel: index === root.sel
         x: model.tx
@@ -777,6 +853,11 @@ BarWidget {
                     // whatever theme happens to share its name.
                     readonly property bool lit: modelData.key === pickedNow
                                                 && pickedSrc === "omarchy"
+                    // The theme the desktop itself is wearing. Marked, not
+                    // hidden: it is a perfectly good thing to paint a tile
+                    // with, and knowing which one it is turns the grid into a
+                    // set of deviations from something rather than a wall.
+                    readonly property bool isDesktop: modelData.key === root.desktopTheme
                     width: Style.space(78)
                     height: Style.space(78)
                     radius: Style.cornerRadius
@@ -801,8 +882,9 @@ BarWidget {
                         height: Style.space(26)
                         radius: Style.space(4)
                         color: modelData.bg
-                        border.color: Qt.alpha(cardTile.acc, 0.55)
-                        border.width: 1
+                        border.color: cardTile.isDesktop ? Color.menu.text
+                                                         : Qt.alpha(cardTile.acc, 0.55)
+                        border.width: cardTile.isDesktop ? 2 : 1
                         Column {
                           anchors.centerIn: parent
                           spacing: Style.space(3)
@@ -884,14 +966,36 @@ BarWidget {
             // SATURATE — crank this tile's text to the Terminal Delight look.
             // One switch that shows its state; td-tint's record carries the
             // truth and --sync re-applies it.
-            SatToggle {
+            // The two things a tile can be beyond its colour: how hard the
+            // text burns, and whether it sits behind curved glass. Side by
+            // side, because they are the same kind of choice about the same
+            // tile — and the CRT switch is simply absent on a box without the
+            // per-window warp, rather than present and inert.
+            Row {
               visible: !model.td
               anchors.horizontalCenter: parent.horizontalCenter
-              label: "SATURATE"
-              on: satNow
-              onFlipped: {
-                Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
-                root.markSat(tileIndex, !satNow)
+              spacing: Style.spacing.md
+
+              SatToggle {
+                anchors.verticalCenter: parent.verticalCenter
+                label: "SATURATE"
+                on: satNow
+                onFlipped: {
+                  Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
+                  root.markSat(tileIndex, !satNow)
+                }
+              }
+
+              SatToggle {
+                visible: root.crtAvailable
+                anchors.verticalCenter: parent.verticalCenter
+                label: "CRT"
+                on: crtNow
+                onFlipped: {
+                  Quickshell.execDetached(["td-tint", "--window", tileAddress,
+                                           "--crt", crtNow ? "off" : "on"])
+                  root.markCrt(tileIndex, !crtNow)
+                }
               }
             }
 
@@ -930,6 +1034,23 @@ BarWidget {
           font.letterSpacing: Style.space(2)
         }
 
+        // Where the cards came from, said out loud. The count is read at
+        // summon, so it is also the proof that the list is this machine's
+        // right now rather than something baked in — and naming the desktop's
+        // own theme is what makes "back to the desktop" a place, not an idea.
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: root.cards.length + " OMARCHY THEMES ON THIS MACHINE"
+              + (root.desktopTheme ? "  ·  DESKTOP WEARS " + root.desktopTheme.toUpperCase() : "")
+              + "  ·  F5 RE-READS"
+          color: Color.menu.text
+          opacity: 0.55
+          font.family: Style.font.menuFamily
+          font.pixelSize: Style.font.caption
+          font.letterSpacing: Style.space(1)
+        }
+
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
           spacing: Style.spacing.md
@@ -939,6 +1060,14 @@ BarWidget {
             label: "SATURATE ALL"
             on: root.allSat
             onFlipped: root.satAll(!root.allSat)
+          }
+
+          SatToggle {
+            visible: root.crtAvailable
+            anchors.verticalCenter: parent.verticalCenter
+            label: "CRT ALL"
+            on: root.allCrt
+            onFlipped: root.crtAll(!root.allCrt)
           }
 
           Rectangle {
@@ -964,7 +1093,8 @@ BarWidget {
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
           text: "←→ select · letter picks a theme (again for the next match) · "
-              + "␣ saturate · ⌫ desktop · S all · R reset · ⏎ TD picker · esc done"
+              + "␣ saturate" + (root.crtAvailable ? " · ⇧␣ CRT" : "") + " · ⌫ desktop · "
+              + "S" + (root.crtAvailable ? "/C" : "") + " all · R reset · ⏎ TD picker · esc done"
           color: Color.menu.text
           opacity: 0.5
           font.family: Style.font.menuFamily
