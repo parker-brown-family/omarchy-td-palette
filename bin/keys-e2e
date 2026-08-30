@@ -25,7 +25,6 @@
 set -uo pipefail
 
 WS=9
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNDIR="${XDG_RUNTIME_DIR:-/tmp}/td-tint"
 PLUGIN="brownfamilysports.td-palette"
 LAYER="td-palette-paint"
