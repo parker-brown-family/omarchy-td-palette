@@ -137,35 +137,44 @@ BarWidget {
     tileModel.setProperty(i, "picked", key)
     tileModel.setProperty(i, "src", src === undefined ? "omarchy" : src)
   }
-  function markSat(i, on) { tileModel.setProperty(i, "sat", on); root.refreshAllSat() }
-  function markCrt(i, on) { tileModel.setProperty(i, "crt", on); root.refreshAllCrt() }
+  // SATURATE and CRT are the same shape of thing: a per-tile boolean the
+  // engine owns, flipped by one td-tint verb that takes on|off|toggle. So they
+  // are ONE set of functions with the switch as an argument rather than two
+  // sets that have to be kept in step by hand — the pair had already drifted
+  // once, when --clear learned to hand the tube back and only SATURATE's model
+  // was told.
+  //
+  //   kind === "crt"  ->  --crt,       tile.crt,  root.allCrt
+  //   otherwise       ->  --saturate,  tile.sat,  root.allSat
+  readonly property var switches: ({
+    sat: { flag: "--saturate", field: "sat" },
+    crt: { flag: "--crt", field: "crt" }
+  })
 
-  // The workspace-wide crank state the global toggle shows: ON only when
-  // every paintable tile is cranked. ListModel edits don't re-run bindings,
-  // so markSat/consume refresh it by hand.
-  property bool allSat: false
-  function refreshAllSat() {
-    var anyOsc = false, all = true
-    for (var i = 0; i < tileModel.count; i++) {
-      var t = tileModel.get(i)
-      if (t.td) continue
-      anyOsc = true
-      if (!t.sat) all = false
-    }
-    root.allSat = anyOsc && all
+  function mark(i, kind, on) {
+    tileModel.setProperty(i, root.switches[kind].field, on)
+    root.refreshAll(kind)
   }
 
-  // Same rule for the tube: ON only when every paintable tile has it.
+  property bool allSat: false
   property bool allCrt: false
-  function refreshAllCrt() {
+
+  // Every paintable tile, or none of them: the rail's toggle says ON only when
+  // there is nothing left to switch on. ListModel edits do not re-run
+  // bindings, so mark() and consume() refresh this by hand.
+  function everyTile(field) {
     var any = false, all = true
     for (var i = 0; i < tileModel.count; i++) {
       var t = tileModel.get(i)
       if (t.td) continue
       any = true
-      if (!t.crt) all = false
+      if (!t[field]) all = false
     }
-    root.allCrt = any && all
+    return any && all
+  }
+  function refreshAll(kind) {
+    if (kind === "crt") root.allCrt = root.everyTile("crt")
+    else root.allSat = root.everyTile("sat")
   }
 
   // One switch, everywhere: label + a chunky track that SAYS which state it
@@ -282,14 +291,8 @@ BarWidget {
     if (!t || t.td) return
     Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
     root.markPicked(root.sel, "-", "")
-    root.markSat(root.sel, false)
-    root.markCrt(root.sel, root.crtAvailable)
-  }
-  function satSel() {
-    var t = tileModel.get(root.sel)
-    if (!t || t.td) return
-    Quickshell.execDetached(["td-tint", "--window", t.address, "--saturate", "toggle"])
-    root.markSat(root.sel, !t.sat)
+    root.mark(root.sel, "sat", false)
+    root.mark(root.sel, "crt", root.crtAvailable)
   }
   function tdSel() {
     var t = tileModel.get(root.sel)
@@ -297,44 +300,40 @@ BarWidget {
     Quickshell.execDetached(["terminal-delight", "ctl", "paint", "on", "--pid", String(t.pid)])
     root.paintDismiss(true)
   }
-  function crtSel() {
+  // One tile, one switch. A tile is skipped when it is a Terminal Delight
+  // window (it has its own picker) or when the switch cannot work here.
+  function switchTile(i, kind, on) {
+    var t = tileModel.get(i)
+    if (!t || t.td) return
+    if (kind === "crt" && !root.crtAvailable) return
+    Quickshell.execDetached(["td-tint", "--window", t.address,
+                             root.switches[kind].flag, on ? "on" : "off"])
+    root.mark(i, kind, on)
+  }
+  function switchSel(kind) {
     var t = tileModel.get(root.sel)
-    if (!t || t.td || !root.crtAvailable) return
-    Quickshell.execDetached(["td-tint", "--window", t.address, "--crt", t.crt ? "off" : "on"])
-    root.markCrt(root.sel, !t.crt)
+    if (!t) return
+    root.switchTile(root.sel, kind, !t[root.switches[kind].field])
   }
-  function crtAll(on) {
-    if (!root.crtAvailable) return
-    for (var i = 0; i < tileModel.count; i++) {
-      var t = tileModel.get(i)
-      if (t.td) continue
-      Quickshell.execDetached(["td-tint", "--window", t.address, "--crt", on ? "on" : "off"])
-      root.markCrt(i, on)
-    }
+  function switchAll(kind, on) {
+    for (var i = 0; i < tileModel.count; i++) root.switchTile(i, kind, on)
   }
-  function crtAllToggle() { root.crtAll(!root.allCrt) }
+  // The global toggle mirrors the switch it drives: everything on -> turn it
+  // all off, anything off -> turn it all on.
+  function switchAllToggle(kind) {
+    root.switchAll(kind, !(kind === "crt" ? root.allCrt : root.allSat))
+  }
 
-  function satAll(on) {
-    for (var i = 0; i < tileModel.count; i++) {
-      var t = tileModel.get(i)
-      if (t.td) continue
-      Quickshell.execDetached(["td-tint", "--window", t.address, "--saturate", on ? "on" : "off"])
-      root.markSat(i, on)
-    }
-  }
-  // The global toggle mirrors the switch it drives: everything cranked ->
-  // pour it all back, anything dry -> crank it all.
-  function satAllToggle() { root.satAll(!root.allSat) }
   function resetAll() {
     for (var i = 0; i < tileModel.count; i++) {
       var t = tileModel.get(i)
       if (t.td) continue
       Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
       root.markPicked(i, "-", "")
-      root.markSat(i, false)
+      root.mark(i, "sat", false)
       // --clear hands the tube back too, so the model has to say so or the
       // rail's CRT ALL keeps claiming a state the tiles no longer hold.
-      root.markCrt(i, root.crtAvailable)
+      root.mark(i, "crt", root.crtAvailable)
     }
   }
 
@@ -509,8 +508,8 @@ BarWidget {
       tileModel.append(tiles[t])
       if (tiles[t].address === focusAddr) root.sel = t
     }
-    root.refreshAllSat()
-    root.refreshAllCrt()
+    root.refreshAll("sat")
+    root.refreshAll("crt")
     root.cards = root.sanitizeCards(st.themes, "theme")
     root.crtAvailable = !!(st.crt && st.crt.available === true)
     // The desktop's theme is a key from the same list, so it gets the same
@@ -631,8 +630,7 @@ BarWidget {
         // per-tile state, both are a toggle, and pairing them on one key is
         // what keeps CRT off the alphabet.
         if (event.key === Qt.Key_Space) {
-          if (event.modifiers & Qt.ShiftModifier) root.crtSel()
-          else root.satSel()
+          root.switchSel((event.modifiers & Qt.ShiftModifier) ? "crt" : "sat")
           event.accepted = true; return
         }
         // The list is read fresh on every summon; F5 re-reads WITHOUT closing,
@@ -642,8 +640,8 @@ BarWidget {
           root.clearSel(); event.accepted = true; return
         }
         var ch = event.text
-        if (ch === "S") { root.satAllToggle(); event.accepted = true; return }
-        if (ch === "C") { root.crtAllToggle(); event.accepted = true; return }
+        if (ch === "S") { root.switchAllToggle("sat"); event.accepted = true; return }
+        if (ch === "C") { root.switchAllToggle("crt"); event.accepted = true; return }
         if (ch === "R") { root.resetAll(); event.accepted = true; return }
         if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
@@ -995,10 +993,7 @@ BarWidget {
                 anchors.verticalCenter: parent.verticalCenter
                 label: "SATURATE"
                 on: satNow
-                onFlipped: {
-                  Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
-                  root.markSat(tileIndex, !satNow)
-                }
+                onFlipped: root.switchTile(tileIndex, "sat", !satNow)
               }
 
               SatToggle {
@@ -1006,11 +1001,7 @@ BarWidget {
                 anchors.verticalCenter: parent.verticalCenter
                 label: "CRT"
                 on: crtNow
-                onFlipped: {
-                  Quickshell.execDetached(["td-tint", "--window", tileAddress,
-                                           "--crt", crtNow ? "off" : "on"])
-                  root.markCrt(tileIndex, !crtNow)
-                }
+                onFlipped: root.switchTile(tileIndex, "crt", !crtNow)
               }
             }
 
@@ -1074,7 +1065,7 @@ BarWidget {
             anchors.verticalCenter: parent.verticalCenter
             label: "SATURATE ALL"
             on: root.allSat
-            onFlipped: root.satAll(!root.allSat)
+            onFlipped: root.switchAllToggle("sat")
           }
 
           SatToggle {
@@ -1082,7 +1073,7 @@ BarWidget {
             anchors.verticalCenter: parent.verticalCenter
             label: "CRT ALL"
             on: root.allCrt
-            onFlipped: root.crtAll(!root.allCrt)
+            onFlipped: root.switchAllToggle("crt")
           }
 
           Rectangle {
