@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Press every key the overlay binds, on a real Omarchy session, and check what
+# each one did.
+#
+#   bin/keys-e2e
+#
+# This is the one surface `bin/verify` cannot reach. A keymap is verified by
+# reading the code right up until the day `Qt.Key_1` turns out not to be what a
+# number-row 1 produces, or a modifier bit is not where the handler thinks it
+# is. Nothing static catches that.
+#
+# It is NOT part of CI and never can be: it needs a compositor, a running
+# Omarchy shell, and a tool that synthesises key events. It is evidence about
+# the box it ran on, on the day it ran.
+#
+# SAFETY. This script types into whatever holds keyboard focus, so it refuses
+# to press anything unless BOTH of these are true, checked before every single
+# keystroke:
+#
+#   * the active workspace is the throwaway one it staged, and
+#   * the overlay's own layer surface is up and holding focus
+#
+# If either fails it aborts rather than typing into whatever is underneath.
+# The windows it types at are three `sleep`s it started itself.
+set -uo pipefail
+
+WS=9
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNDIR="${XDG_RUNTIME_DIR:-/tmp}/td-tint"
+PLUGIN="brownfamilysports.td-palette"
+LAYER="td-palette-paint"
+
+need() { command -v "$1" >/dev/null || { echo "needs $1" >&2; exit 1; }; }
+for c in hyprctl wtype jq grim td-tint foot omarchy-shell; do need "$c"; done
+
+pass=0 fail=0
+ok() { pass=$((pass + 1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
+no() { fail=$((fail + 1)); printf '  \033[31m✗\033[0m %s\n' "$1"; }
+eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else no "$1"; printf '      want %q\n      got  %q\n' "$3" "$2"; fi; }
+
+HOME_WS="$(hyprctl activeworkspace -j | jq -r '.id')"
+cleanup() {
+  omarchy-shell "$PLUGIN" close >/dev/null 2>&1
+  sleep 0.4
+  while IFS= read -r a; do
+    [[ -n $a ]] || continue
+    rm -f "$RUNDIR/$a"
+    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1
+  done < <(hyprctl clients -j | jq -r --argjson w "$WS" '.[] | select(.workspace.id == $w) | .address')
+  hyprctl dispatch "hl.dsp.focus({ workspace = $HOME_WS })" >/dev/null 2>&1
+}
+trap cleanup EXIT
+
+overlay_up() { hyprctl layers -j | jq -e --arg n "$LAYER" '[.. | objects | select(.namespace? == $n)] | length > 0' >/dev/null 2>&1; }
+on_stage()   { [[ "$(hyprctl activeworkspace -j | jq -r '.id')" == "$WS" ]]; }
+
+# The whole safety story, in one function. Nothing types except through here.
+press() { # description wtype-args...
+  local what="$1"; shift
+  if ! on_stage; then
+    echo "ABORT: active workspace is not the staged one — refusing to type" >&2; exit 2
+  fi
+  if ! overlay_up; then
+    echo "ABORT: the overlay is not up — refusing to type into whatever is" >&2; exit 2
+  fi
+  wtype "$@" || { echo "wtype failed for $what" >&2; exit 2; }
+  sleep 0.9
+}
+
+rec()      { [[ -f "$RUNDIR/$1" ]] && head -1 "$RUNDIR/$1" || echo "(none)"; }
+rec_sat()  { [[ -f "$RUNDIR/$1" ]] && grep -qx 'sat=1' "$RUNDIR/$1" && echo 1 || echo 0; }
+rec_crt()  { [[ -f "$RUNDIR/$1" ]] && sed -n 's/^crt=\(on\|off\)$/\1/p' "$RUNDIR/$1" | head -1 || true; }
+records()  { local a c=0; for a in "$@"; do [[ -f "$RUNDIR/$a" ]] && c=$((c + 1)); done; echo "$c"; }
+
+printf '\n— staging a workspace of its own\n'
+hyprctl dispatch "hl.dsp.focus({ workspace = $WS })" >/dev/null 2>&1
+sleep 0.5
+for _ in 1 2 3; do
+  setsid foot --title "td-keys-e2e" sh -c 'exec sleep 900' >/dev/null 2>&1 &
+  sleep 0.8
+done
+sleep 1.2
+
+mapfile -t A < <(hyprctl clients -j | jq -r --argjson w "$WS" \
+  '[.[] | select(.workspace.id == $w)] | sort_by(.at[1], .at[0]) | .[].address')
+eq "three throwaway terminals are up" "${#A[@]}" "3"
+[[ ${#A[@]} -eq 3 ]] || exit 1
+for a in "${A[@]}"; do rm -f "$RUNDIR/$a"; done
+
+# Open on a known tile: the overlay selects the tile of the focused window, so
+# focusing the first one makes "the selected tile" a thing this test can name.
+hyprctl dispatch "hl.dsp.focus({ window = \"address:${A[0]}\" })" >/dev/null 2>&1
+sleep 0.5
+omarchy-shell "$PLUGIN" open >/dev/null 2>&1
+sleep 1.8
+if overlay_up; then ok "the overlay is up and holding keyboard focus"; else no "the overlay came up"; exit 1; fi
+
+printf '\n— a letter picks a theme, and picks the next one on a second press\n'
+press "c" "c"
+eq "c paints the selected tile with the first theme starting with c" \
+  "$(rec "${A[0]}")" "catppuccin"
+press "c again" "c"
+eq "…and again walks to the next match" \
+  "$(rec "${A[0]}")" "catppuccin-latte"
+
+printf '\n— 1 and 2 are this tile, 3 puts it back\n'
+press "1" "1"
+eq "1 saturates the selected tile" "$(rec_sat "${A[0]}")" "1"
+press "2" "2"
+eq "2 switches its tube (the desktop is curved, so the first press is off)" \
+  "$(rec_crt "${A[0]}")" "off"
+eq "…and leaves the pick alone" "$(rec "${A[0]}")" "catppuccin-latte"
+
+printf '\n— the arrows move the selection, which only a paint can prove\n'
+press "Right" -k Right
+press "n" "n"
+eq "after Right, a letter paints the NEXT tile" "$(rec "${A[1]}")" "nord"
+eq "…and the first tile is untouched" "$(rec "${A[0]}")" "catppuccin-latte"
+
+printf '\n— Ctrl widens the same digit to every tile\n'
+press "Ctrl+1" -M ctrl -k 1 -m ctrl
+eq "Ctrl+1 saturates all three" \
+  "$(rec_sat "${A[0]}")$(rec_sat "${A[1]}")$(rec_sat "${A[2]}")" "111"
+press "Ctrl+2" -M ctrl -k 2 -m ctrl
+eq "Ctrl+2 gives all three the same tube state" \
+  "$(rec_crt "${A[0]}")/$(rec_crt "${A[1]}")/$(rec_crt "${A[2]}")" "on/on/on"
+
+printf '\n— 3 clears one tile, Ctrl+3 clears the workspace\n'
+press "3" "3"
+eq "3 clears the selected tile only" "$(rec "${A[1]}")" "(none)"
+eq "…and the others keep their records" "$(records "${A[0]}" "${A[2]}")" "2"
+press "Ctrl+3" -M ctrl -k 3 -m ctrl
+eq "Ctrl+3 clears every tile" "$(records "${A[0]}" "${A[1]}" "${A[2]}")" "0"
+
+printf '\n— F5 re-reads the theme list without closing\n'
+before="$(journalctl --user --since '-2 minutes' 2>/dev/null | grep -c 'td-paint: open — snapshotting')"
+press "F5" -k F5
+after="$(journalctl --user --since '-2 minutes' 2>/dev/null | grep -c 'td-paint: open — snapshotting')"
+if [[ $after -gt $before ]]; then ok "F5 re-snapshots"; else no "F5 re-snapshots ($before -> $after)"; fi
+if overlay_up; then ok "…without closing the overlay"; else no "…without closing the overlay"; fi
+
+printf '\n— Esc is done\n'
+press "Escape" -k Escape
+sleep 0.6
+if overlay_up; then no "Esc dismisses the overlay"; else ok "Esc dismisses the overlay"; fi
+
+printf '\n%s\n' "$(printf '─%.0s' {1..62})"
+if [[ $fail -eq 0 ]]; then
+  printf '\033[32mall %d green — every key does what the README says\033[0m\n' "$pass"
+else
+  printf '\033[31m%d failing (of %d)\033[0m\n' "$fail" "$((pass + fail))"
+  exit 1
+fi

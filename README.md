@@ -236,6 +236,18 @@ which needs no import resolution. An Omarchy box additionally gets the full
 `omarchy plugin validate`. CI runs the first tier on every push and skips the
 other two out loud rather than implying they passed.
 
+```bash
+./bin/keys-e2e
+```
+
+The keymap is the one thing no linter can reach, so this presses every key for
+real — on a throwaway workspace it stages itself — and checks the run records
+afterwards. It refuses to type unless that workspace is active *and* the
+overlay's own layer surface is holding focus, checked before every keystroke,
+because a script that synthesises key events types into whatever is in front of
+it. Needs a compositor and `wtype`, so it is evidence about the box it ran on
+rather than something CI can do.
+
 ## The screenshots
 
 `bin/shoot` builds the pictures in this README. It stages a workspace of its own
