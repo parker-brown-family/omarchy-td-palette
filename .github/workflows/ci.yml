@@ -8,6 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        # Full history: bin/check-shots compares the commit that last
+        # touched an image against the one that last touched the code it
+        # is a picture of, and a shallow clone has neither.
+        with:
+          fetch-depth: 0
 
       # `qmlformat` is the only QML check a machine without the Omarchy shell
       # can perform: it parses without resolving imports, so it never sees
@@ -20,6 +25,9 @@ jobs:
       - name: qmlformat is actually present
         run: test -x /usr/lib/qt6/bin/qmlformat || command -v qmlformat
 
+      - name: screenshots are of the current code
+        run: ./bin/check-shots
+
       - name: verify
         run: ./bin/verify
 
@@ -27,4 +35,4 @@ jobs:
       # running Omarchy shell and synthesised key events. Shellcheck it here so
       # the test that cannot run in CI is at least not rotting in it.
       - name: shellcheck the scripts
-        run: sudo apt-get install -y --no-install-recommends shellcheck && shellcheck -S warning bin/verify bin/keys-e2e bin/shoot
+        run: sudo apt-get install -y --no-install-recommends shellcheck && shellcheck -S warning bin/verify bin/keys-e2e bin/shoot bin/check-shots

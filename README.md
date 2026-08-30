@@ -250,6 +250,18 @@ rather than something CI can do.
 
 ## The screenshots
 
+```bash
+./bin/check-shots
+```
+
+A screenshot is a build artifact with no build: nothing rebuilds it, nothing
+invalidates it, and it keeps rendering fine long after it stopped being true.
+This one compares the commit that last touched each image against the commit
+that last touched the code it is a picture of, and fails if the code moved
+later. Put `[no-reshoot]` in the commit message when the change cannot be seen
+— a comment does not move a pixel, and a gate that cannot tell the difference
+is one people route around. CI runs it.
+
 `bin/shoot` builds the pictures in this README. It stages a workspace of its own
 — three fresh terminals, each already wearing a different theme — raises the
 overlay, captures it, and puts you back where you were. Shooting the live desktop

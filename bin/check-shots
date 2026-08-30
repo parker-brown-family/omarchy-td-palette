@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Fail if a screenshot in this repo is older than the code it is a picture of.
+#
+#   bin/check-shots
+#
+# A screenshot is a build artifact with no build. Nothing rebuilds it, nothing
+# invalidates it, and it keeps rendering fine long after it stopped being true —
+# so it rots silently and in public, on the README, which is the one file
+# everybody reads and nobody diffs.
+#
+# That is not a hypothetical. In one afternoon this project shipped a hero image
+# showing a picker that had been replaced twice over, and a marketplace preview
+# taken before half the UI existed. Both were caught by a human squinting at a
+# crop, which is not a process.
+#
+# So: for each tracked image, compare the commit that last touched it against
+# the commit that last touched the code that draws it. If the code moved later,
+# the picture is stale.
+#
+# ESCAPE HATCH. A comment-only change to a QML file does not change a pixel, and
+# a gate that cannot tell the difference is a gate people learn to route around.
+# Put `[no-reshoot]` in the commit message and this accepts it — the claim is
+# then in the history, where a reviewer can disagree with it.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root" || exit 1
+
+# image  ->  the sources whose changes should be visible in it
+declare -A RENDERS=(
+  ["docs/overlay.png"]="BarWidget.qml"
+  ["docs/workspace.png"]="BarWidget.qml"
+  ["preview.png"]="BarWidget.qml"
+)
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "not a git checkout — nothing to compare" >&2
+  exit 0
+fi
+
+# A shallow clone has no history to compare against, and silently passing would
+# be worse than saying so: the gate would look green while checking nothing.
+if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+  echo "shallow clone — this check needs full history (actions/checkout: fetch-depth: 0)" >&2
+  exit 1
+fi
+
+when()  { git log -1 --format=%ct -- "$1" 2>/dev/null; }
+commit() { git log -1 --format=%h -- "$1" 2>/dev/null; }
+subject() { git log -1 --format=%B -- "$1" 2>/dev/null; }
+
+stale=0
+for img in "${!RENDERS[@]}"; do
+  if [[ ! -f $img ]]; then
+    printf '  \033[33m!\033[0m %s is listed here but not in the repo\n' "$img"
+    stale=$((stale + 1))
+    continue
+  fi
+
+  img_at="$(when "$img")"
+  [[ -n $img_at ]] || { printf '  \033[33m!\033[0m %s is untracked\n' "$img"; continue; }
+
+  newest_src="" newest_at=0
+  for src in ${RENDERS[$img]}; do
+    src_at="$(when "$src")"
+    [[ -n $src_at ]] || continue
+    (( src_at > newest_at )) && { newest_at=$src_at; newest_src=$src; }
+  done
+
+  if (( newest_at > img_at )); then
+    if grep -q '\[no-reshoot\]' <<<"$(subject "$newest_src")"; then
+      printf '  \033[90m–\033[0m %-24s older than %s, waived by [no-reshoot] in %s\n' \
+        "$img" "$newest_src" "$(commit "$newest_src")"
+    else
+      printf '  \033[31m✗\033[0m %-24s is older than %s (%s)\n' \
+        "$img" "$newest_src" "$(commit "$newest_src")"
+      stale=$((stale + 1))
+    fi
+  else
+    printf '  \033[32m✓\033[0m %-24s current with %s\n' "$img" "${RENDERS[$img]}"
+  fi
+done
+
+if (( stale > 0 )); then
+  printf '\n\033[31m%d stale image(s).\033[0m Re-shoot with `bin/shoot`, or say why with\n' "$stale"
+  printf '`[no-reshoot]` in the commit message if the change cannot be seen.\n'
+  exit 1
+fi
+printf '\n\033[32mevery picture is of the current code\033[0m\n'
