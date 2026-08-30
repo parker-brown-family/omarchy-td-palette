@@ -222,6 +222,20 @@ Runtime tints die with their windows; the plugin itself writes no state and
 leaves nothing behind. A tile whose CRT you switched off returns to the desktop's
 rounding the moment you clear it, or when its window closes.
 
+## Verifying it
+
+```bash
+./bin/verify
+```
+
+Three tiers, and it says which ones it could run. A bare machine gets the
+manifest, the packaging rules, the house rules (no hardcoded colours, no second
+shell process, every command an argv array) and a QML parse via `qmlformat`,
+which needs no import resolution. An Omarchy box additionally gets the full
+`qmllint` against the shell's own singletons and the real
+`omarchy plugin validate`. CI runs the first tier on every push and skips the
+other two out loud rather than implying they passed.
+
 ## The screenshots
 
 `bin/shoot` builds the pictures in this README. It stages a workspace of its own
