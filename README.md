@@ -241,6 +241,17 @@ which needs no import resolution. An Omarchy box additionally gets the full
 other two out loud rather than implying they passed.
 
 ```bash
+./bin/check-listing
+```
+
+The marketplace pins a listing to an exact commit and serves that snapshot — its
+preview, its description, its version — until somebody asks for a new one, and
+nothing tells you it has gone stale. This compares the listed commit against the
+latest release tag. Lagging behind unreleased commits on main is fine; lagging
+behind a *release* means the page everyone browses is not the plugin you
+shipped. Run it when you cut a release. Needs network, so it is not a CI gate.
+
+```bash
 ./bin/keys-e2e
 ```
 

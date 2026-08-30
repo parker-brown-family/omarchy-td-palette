@@ -35,4 +35,4 @@ jobs:
       # running Omarchy shell and synthesised key events. Shellcheck it here so
       # the test that cannot run in CI is at least not rotting in it.
       - name: shellcheck the scripts
-        run: sudo apt-get install -y --no-install-recommends shellcheck && shellcheck -S warning bin/verify bin/keys-e2e bin/shoot bin/check-shots
+        run: sudo apt-get install -y --no-install-recommends shellcheck && shellcheck -S warning bin/verify bin/keys-e2e bin/shoot bin/check-shots bin/check-listing

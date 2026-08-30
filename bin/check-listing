@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Is the marketplace serving the plugin we actually released?
+#
+#   bin/check-listing
+#
+# The marketplace pins a listing to an EXACT COMMIT and serves that snapshot —
+# its preview, its description, its version — until somebody asks for a new one.
+# Nothing tells you it has gone stale. The repo can be perfect and the page
+# people actually see can be two releases behind, which is precisely what
+# happened here: v0.3.0 shipped while the listing kept serving v0.2.0's
+# preview, a 192x72 crop of the bar icon, upscaled into a blur on the card.
+#
+# That defect had a fix in the repo and an issue closed against it. Neither
+# reached the listing, because everything that checked anything was pointed at
+# the repository and the listing is a different artifact.
+#
+# THE RULE: the listed commit must be at or ahead of the latest RELEASE TAG.
+# Lagging behind unreleased commits on main is fine and expected — a listing is
+# not supposed to track every push. Lagging behind a release is the bug.
+#
+# Needs network. Not a CI gate for that reason, and because a listing legitimately
+# takes a day or two to catch up after a release; run it when you cut one.
+set -uo pipefail
+
+REGISTRY_REPO="HANCORE-linux/omarchy-plugin-marketplace"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root" || exit 1
+
+for c in gh jq git; do
+  command -v "$c" >/dev/null || { echo "needs $c" >&2; exit 1; }
+done
+
+repo_url="$(git remote get-url origin 2>/dev/null | sed -e 's|git@github.com:|https://github.com/|' -e 's|\.git$||')"
+[[ -n $repo_url ]] || { echo "no origin remote" >&2; exit 1; }
+
+reg="$(mktemp)"
+trap 'rm -f "$reg"' EXIT
+if ! gh api "repos/$REGISTRY_REPO/contents/registry.json" \
+     -H "Accept: application/vnd.github.raw" >"$reg" 2>/dev/null; then
+  echo "could not reach the marketplace registry — skipping" >&2
+  exit 0
+fi
+
+listed="$(jq -r --arg r "$repo_url" \
+  '.sources[]? | select(.repo == $r) | .listingValidatedCommit // empty' "$reg" | head -1)"
+
+if [[ -z $listed ]]; then
+  printf '  \033[90m–\033[0m not listed on the marketplace yet — nothing to compare\n'
+  exit 0
+fi
+
+git fetch -q --tags origin 2>/dev/null || true
+tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+[[ -n $tag ]] || { printf '  \033[90m–\033[0m no release tag yet\n'; exit 0; }
+tag_sha="$(git rev-list -n1 "$tag" 2>/dev/null)"
+
+printf '  listed snapshot   %s\n' "${listed:0:12}"
+printf '  latest release    %s (%s)\n' "${tag_sha:0:12}" "$tag"
+
+if [[ $listed == "$tag_sha" ]]; then
+  printf '\n\033[32mthe marketplace is serving %s — the release people can see is the one you cut\033[0m\n' "$tag"
+  exit 0
+fi
+
+# Ahead is fine: the listing may sit on a commit newer than the last tag.
+if git merge-base --is-ancestor "$tag_sha" "$listed" 2>/dev/null; then
+  printf '\n\033[32mthe listing is at or ahead of %s\033[0m\n' "$tag"
+  exit 0
+fi
+
+behind="$(git rev-list --count "$listed".."$tag_sha" 2>/dev/null || echo '?')"
+listed_ver="$(git show "$listed:manifest.json" 2>/dev/null | jq -r '.version // "?"')"
+printf '\n\033[31mthe marketplace is serving v%s, %s commits behind %s.\033[0m\n' \
+  "$listed_ver" "$behind" "$tag"
+cat <<EOF
+Everyone browsing the catalogue sees that snapshot — its preview, its
+description and its version — not what is on main.
+
+  fix: open a "Verify or update a listed plugin" issue on
+       https://github.com/$REGISTRY_REPO/issues/new?template=verify-plugin.yml
+       action:  Verify and publish a newer upstream commit
+       commit:  $(git rev-parse origin/main 2>/dev/null || git rev-parse HEAD)
+EOF
+exit 1
