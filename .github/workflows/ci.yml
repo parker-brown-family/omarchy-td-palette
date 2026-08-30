@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # `qmlformat` is the only QML check a machine without the Omarchy shell
+      # can perform: it parses without resolving imports, so it never sees
+      # `qs.Commons` and never needs to. The full `qmllint` and the real
+      # `omarchy plugin validate` run on an Omarchy box, and bin/verify says
+      # plainly which of the three it skipped rather than implying all passed.
+      - name: deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq qt6-declarative-dev-tools
+
+      - name: qmlformat is actually present
+        run: test -x /usr/lib/qt6/bin/qmlformat || command -v qmlformat
+
+      - name: verify
+        run: ./bin/verify

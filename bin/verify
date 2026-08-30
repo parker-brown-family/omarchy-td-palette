@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# The gate. Everything that can be checked without a running Omarchy, plus
+# everything that can't — skipped with a reason rather than silently.
+#
+#   bin/verify
+#
+# Exit 0 only when there are no errors AND no warnings. A warning you decided
+# to accept gets a `taste-ok: <reason>` comment on the offending line.
+#
+# This runs in CI on a bare Ubuntu runner, which is why the split matters: a
+# runner has Qt's QML tooling but no Omarchy shell, so `qmllint` cannot resolve
+# `qs.Commons` and `omarchy plugin validate` does not exist there. What a runner
+# CAN do is parse the QML, read the manifest, and enforce the house rules — and
+# those are what actually regress.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAMESPACE="brownfamilysports"
+
+errors=0 warns=0
+err()  { printf '  \033[31m✗\033[0m %s\n' "$*"; errors=$((errors + 1)); }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; warns=$((warns + 1)); }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+skip() { printf '  \033[90m–\033[0m %s\n' "$*"; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Qt ships its QML tools outside PATH on some distros, so look in both places
+# rather than declaring the check unavailable when it is merely elsewhere.
+qt_tool() {
+  local t="$1" p
+  for p in "$(command -v "$t" 2>/dev/null)" "/usr/lib/qt6/bin/$t" "/usr/lib/qt6/$t"; do
+    [[ -n $p && -x $p ]] && { printf '%s\n' "$p"; return 0; }
+  done
+  return 1
+}
+
+have jq || { echo "jq is required" >&2; exit 1; }
+
+mf="$root/manifest.json"
+
+printf '\n\033[1mmanifest\033[0m\n'
+
+if ! jq empty "$mf" 2>/dev/null; then
+  err "manifest.json is not valid JSON"
+  exit 1
+fi
+ok "parses"
+
+for field in schemaVersion id name version kinds entryPoints; do
+  [[ "$(jq -r "has(\"$field\")" "$mf")" == "true" ]] || err "missing required field: $field"
+done
+# Wanted by the marketplace listing, not by the shell's own validator.
+for field in author description license; do
+  [[ "$(jq -r "has(\"$field\")" "$mf")" == "true" ]] || warn "no \`$field\` — the marketplace listing wants it"
+done
+
+id="$(jq -r '.id // ""' "$mf")"
+case "$id" in
+  omarchy.*)      err "id '$id' uses the reserved omarchy.* namespace" ;;
+  "$NAMESPACE".*) ok "id $id" ;;
+  *)              warn "id '$id' is outside our $NAMESPACE.* namespace — deliberate?" ;;
+esac
+
+jq -e '.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+")' "$mf" >/dev/null 2>&1 \
+  && ok "version $(jq -r .version "$mf") is semver" \
+  || warn "version is not semver"
+
+# Every declared kind needs its entry point, and every entry point must be a
+# safe relative path that exists. This mirrors what `omarchy plugin validate`
+# enforces, so a runner catches the same break a box would.
+missing=0
+while IFS= read -r k; do
+  [[ -n $k ]] || continue
+  case "$k" in
+    bar-widget)                 key="barWidget" ;;
+    panel|overlay|menu|service|bar) key="$k" ;;
+    *) err "unknown kind: $k"; continue ;;
+  esac
+  f="$(jq -r --arg k "$key" '.entryPoints[$k] // ""' "$mf")"
+  if [[ -z $f ]]; then
+    err "kind '$k' declares no entryPoints.$key"; missing=1
+  elif [[ $f = /* || $f == *..* ]]; then
+    err "entryPoints.$key '$f' is not a safe relative path"; missing=1
+  elif [[ ! -f "$root/$f" ]]; then
+    err "entryPoints.$key points at $f, which does not exist"; missing=1
+  fi
+done < <(jq -r '.kinds // [] | .[]' "$mf")
+[[ $missing -eq 0 ]] && ok "kinds ↔ entryPoints line up"
+
+printf '\n\033[1mpackaging\033[0m\n'
+
+# The shell's validator refuses a plugin folder containing a symlink outright.
+if find "$root" -type l -not -path '*/.git/*' | grep -q .; then
+  err "symlinks inside the plugin folder — the validator refuses these"
+else
+  ok "no symlinks"
+fi
+
+for f in README.md LICENSE preview.png; do
+  [[ -f "$root/$f" ]] && ok "$f" || warn "no $f"
+done
+
+grep -qi 'network' "$root/README.md" 2>/dev/null \
+  && ok "README discloses network behaviour" \
+  || warn "README does not disclose network behaviour"
+
+grep -rq '__[A-Z_]*__' "$root" --include='*.qml' --include='*.json' 2>/dev/null \
+  && err "unsubstituted template placeholders remain" \
+  || ok "no template placeholders left"
+
+printf '\n\033[1mhouse rules\033[0m\n'
+
+# A hex literal means the plugin drew a colour the user's theme did not choose.
+hits="$(grep -rnE '#[0-9a-fA-F]{3,8}\b' --include='*.qml' --include='*.js' "$root" 2>/dev/null \
+        | grep -v 'taste-ok' || true)"
+if [[ -n $hits ]]; then
+  err "hardcoded colours — pull them off the theme:"
+  printf '      %s\n' "$hits"
+else
+  ok "no hardcoded colours"
+fi
+
+# The sanctioned APIs live under the `Quickshell` namespace, so the namespace
+# proves nothing. What would prove a second shell is the word inside a STRING
+# LITERAL — that is a command line about to be executed.
+if grep -rniE '"[^"]*quickshell[^"]*"' --include='*.qml' --include='*.js' "$root" 2>/dev/null \
+   | grep -v 'taste-ok' | grep -q .; then
+  err "a string literal names quickshell — never start a second shell process"
+else
+  ok "starts no second shell"
+fi
+
+# Every command this plugin runs must be an argv ARRAY. A string-form
+# execDetached is a shell line, and a shell line re-splits words on their way
+# to a process — which is the whole reason the theme list is sanitised.
+if grep -rnE 'execDetached\(\s*"' --include='*.qml' "$root" 2>/dev/null | grep -q .; then
+  err "string-form execDetached — every command must be an argv array"
+else
+  ok "every command is an argv array"
+fi
+
+bw="$root/$(jq -r '.entryPoints.barWidget // "BarWidget.qml"' "$mf")"
+if [[ -f $bw ]]; then
+  grep -q 'vertical' "$bw" && ok "answers for a vertical bar" \
+    || warn "never mentions \`vertical\` — will it look right in a side bar?"
+  grep -q 'IpcHandler' "$bw" && ok "reachable from a keybind (IpcHandler)" \
+    || warn "no IpcHandler — the widget is unreachable from a keybind"
+fi
+
+printf '\n\033[1mQML\033[0m\n'
+
+# `qmlformat -n` parses without resolving imports, which is the only QML check
+# a machine without the Omarchy shell can actually perform — and it does catch
+# a real syntax break, which is what it is here for.
+if fmt="$(qt_tool qmlformat)"; then
+  bad=0
+  while IFS= read -r f; do
+    "$fmt" -n "$f" >/dev/null 2>&1 || { err "qmlformat cannot parse ${f#"$root/"}"; bad=1; }
+  done < <(find "$root" -name '*.qml' -not -path '*/.git/*')
+  [[ $bad -eq 0 ]] && ok "every .qml parses"
+else
+  warn "qmlformat not found — QML syntax unchecked"
+fi
+
+# The full lint needs the shell's own singletons. Quickshell's `qs.*` prefix
+# aliases the shell ROOT, so a bare -I can never resolve `qs.Commons`; a
+# throwaway import root holding one `qs` symlink gives the linter the exact
+# view the runtime has.
+if lint="$(qt_tool qmllint)" && [[ -n ${OMARCHY_PATH:-} && -d "${OMARCHY_PATH}/shell" ]]; then
+  qsroot="$(mktemp -d)"
+  ln -s "$OMARCHY_PATH/shell" "$qsroot/qs"
+  out="$(find "$root" -name '*.qml' -not -path '*/.git/*' -print0 \
+         | xargs -0 -r "$lint" -I "$qsroot" -I /usr/lib/qt6/qml 2>&1)"
+  rm -rf "$qsroot"
+  [[ -n $out ]] && { err "qmllint:"; printf '      %s\n' "$out"; } || ok "qmllint clean"
+else
+  skip "qmllint needs OMARCHY_PATH and the shell — run this on an Omarchy box"
+fi
+
+if have omarchy; then
+  if omarchy plugin validate "$root" >/dev/null 2>&1; then
+    ok "omarchy plugin validate"
+  else
+    err "omarchy plugin validate failed:"
+    omarchy plugin validate "$root" 2>&1 | sed 's/^/      /'
+  fi
+else
+  skip "omarchy not on PATH — the real validator did not run"
+fi
+
+printf '\n%s\n' "$(printf '─%.0s' {1..62})"
+if [[ $errors -gt 0 ]]; then
+  printf '\033[31m%d error(s), %d warning(s) — not shippable\033[0m\n' "$errors" "$warns"; exit 1
+elif [[ $warns -gt 0 ]]; then
+  printf '\033[33m%d warning(s) — fix them or annotate with `taste-ok: <reason>`\033[0m\n' "$warns"; exit 1
+else
+  printf '\033[32mclean\033[0m\n'
+fi

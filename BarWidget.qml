@@ -30,6 +30,17 @@ import qs.Ui
 // desktop from — and Terminal Delight is IN it, as one theme, so nothing is
 // out of reach. `td-tint cherry` still wears a palette from a prompt.
 //
+// The list is read fresh on every summon — `td-tint --state` globs the theme
+// directories at the moment you press the key, so a theme installed a minute
+// ago is on the card grid, and one uninstalled a minute ago is not. F5 re-reads
+// without closing, for when the install happened in the window behind this one.
+//
+// Each tile also has a TUBE: the barrel warp and glass glare that
+// `shaders/surface.frag` draws for any window with a rounding radius. That
+// makes rounding the switch, and it is the only live one — Hyprland reads
+// window shaders once at startup. So CRT is per tile, and CRT ALL is the
+// workspace, exactly as SATURATE is.
+//
 // The practical dividend: every lowercase letter belongs to a theme NAME. A
 // verb bound to one steals it — `o` was the source switch and `osaka-jade`
 // wanted it, `s` was saturate and `solitude` wanted it, and `d` was safe only
@@ -69,6 +80,16 @@ BarWidget {
   // What a summon snapshot found: the installed themes, and the terminal tiles
   // (monitor-local rects) of the active workspace.
   property var cards: []
+
+  // The theme the desktop is wearing at the moment of the snapshot. The card
+  // that matches is marked, so the grid says what you are deviating FROM
+  // rather than making you remember it.
+  property string desktopTheme: ""
+
+  // Whether the per-window warp is installed at all. A CRT switch on a box
+  // without `shaders/surface.frag` would be a control that does nothing, so
+  // the overlay says why instead of drawing one.
+  property bool crtAvailable: false
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -116,83 +137,173 @@ BarWidget {
     tileModel.setProperty(i, "picked", key)
     tileModel.setProperty(i, "src", src === undefined ? "omarchy" : src)
   }
-  function markSat(i, on) { tileModel.setProperty(i, "sat", on); root.refreshAllSat() }
+  // SATURATE and CRT are the same shape of thing: a per-tile boolean the
+  // engine owns, flipped by one td-tint verb that takes on|off|toggle. So they
+  // are ONE set of functions with the switch as an argument rather than two
+  // sets that have to be kept in step by hand — the pair had already drifted
+  // once, when --clear learned to hand the tube back and only SATURATE's model
+  // was told.
+  //
+  //   kind === "crt"  ->  --crt,       tile.crt,  root.allCrt
+  //   otherwise       ->  --saturate,  tile.sat,  root.allSat
+  readonly property var switches: ({
+    sat: { flag: "--saturate", field: "sat" },
+    crt: { flag: "--crt", field: "crt" }
+  })
 
-  // The workspace-wide crank state the global toggle shows: ON only when
-  // every paintable tile is cranked. ListModel edits don't re-run bindings,
-  // so markSat/consume refresh it by hand.
+  function mark(i, kind, on) {
+    tileModel.setProperty(i, root.switches[kind].field, on)
+    root.refreshAll(kind)
+  }
+
   property bool allSat: false
-  function refreshAllSat() {
-    var anyOsc = false, all = true
+  property bool allCrt: false
+
+  // Every paintable tile, or none of them: the rail's toggle says ON only when
+  // there is nothing left to switch on. ListModel edits do not re-run
+  // bindings, so mark() and consume() refresh this by hand.
+  function everyTile(field) {
+    var any = false, all = true
     for (var i = 0; i < tileModel.count; i++) {
       var t = tileModel.get(i)
       if (t.td) continue
-      anyOsc = true
-      if (!t.sat) all = false
+      any = true
+      if (!t[field]) all = false
     }
-    root.allSat = anyOsc && all
+    return any && all
+  }
+  function refreshAll(kind) {
+    if (kind === "crt") root.allCrt = root.everyTile("crt")
+    else root.allSat = root.everyTile("sat")
   }
 
   // One switch, everywhere: label + a chunky track that SAYS which state it
   // is in. The knob slides, the track fills, and the word ON/OFF sits in the
   // empty half — state you can read from across the room, mouse-clickable.
-  component SatToggle: Item {
-    id: st
-    property string label: "SATURATE"
+  // A chord, drawn the way Omarchy's own keybindings menu draws one. It sits
+  // ON the control it works, which is what lets the legend line go: a hint
+  // beside the thing it describes is read once and never needed again, where
+  // a strip of prose at the bottom of the overlay is read every time or not
+  // at all.
+  component KeyCap: Rectangle {
+    id: kc
+    property string keys: ""
+    implicitWidth: kcText.implicitWidth + Style.space(18)
+    implicitHeight: Style.space(24)
+    radius: Style.space(4)
+    color: "transparent"
+    border.color: Color.menu.border
+    border.width: 1
+
+    Text {
+      id: kcText
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: kc.keys
+      color: Color.menu.text
+      opacity: 0.8
+      font.family: Style.font.menuFamily
+      font.pixelSize: Style.font.caption - 1
+      font.letterSpacing: Style.space(1)
+    }
+  }
+
+  // The track, and only the track. It used to carry its own label, which it
+  // could not keep doing once the same three options had to read [key][state]
+  // [name] down a column in the rail and across a row on a tile — a component
+  // that hard-codes its own composition can do one of those, not both.
+  component Switch: Rectangle {
+    id: sw
     property bool on: false
-    signal flipped()
-    implicitWidth: stRow.implicitWidth
+    width: Style.space(52)
+    height: Style.space(24)
+    radius: height / 2
+    color: sw.on ? Color.menu.selectedBackground : "transparent"
+    border.color: sw.on ? Color.menu.selectedBackground : Color.menu.border
+    border.width: 1
+    Behavior on color { ColorAnimation { duration: 100 } }
+
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      x: sw.on ? Style.space(7) : sw.width - implicitWidth - Style.space(7)
+      text: sw.on ? "ON" : "OFF"
+      color: sw.on ? Color.menu.selectedText : Color.menu.text
+      opacity: sw.on ? 1 : 0.6
+      font.family: Style.font.menuFamily
+      font.pixelSize: Style.font.caption - 2
+      font.bold: true
+    }
+
+    Rectangle {
+      width: sw.height - Style.space(6)
+      height: width
+      radius: width / 2
+      y: Style.space(3)
+      x: sw.on ? sw.width - width - Style.space(3) : Style.space(3)
+      color: sw.on ? Color.menu.selectedText : Color.menu.text
+      Behavior on x { NumberAnimation { duration: 100 } }
+    }
+  }
+
+  // One option: the key that fires it, its state, and its name. `toggle:
+  // false` is for the one that has no state to show — RESET happens, it is
+  // not a condition — and it still occupies the switch's width so the names
+  // stay in a column instead of stepping left on the last row.
+  component OptionRow: Item {
+    id: orow
+    property string keys: ""
+    property string label: ""
+    property bool on: false
+    property bool toggle: true
+    signal fired()
+    implicitWidth: orowRow.implicitWidth
     implicitHeight: Style.space(30)
 
     Row {
-      id: stRow
+      id: orowRow
       spacing: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
 
+      KeyCap {
+        anchors.verticalCenter: parent.verticalCenter
+        keys: orow.keys
+      }
+
+      Switch {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: orow.toggle
+        on: orow.on
+      }
+
+      // ↩ and not ⟲, which is the obvious glyph and the one this was written
+      // with: JetBrainsMono has no circular arrow at any of U+27F2, U+21BA,
+      // U+21BB or U+2B6E, so it rendered as tofu on every screenshot until
+      // somebody looked closely. A hooked left arrow is in the font and says
+      // the same thing.
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: st.label
+        visible: !orow.toggle
+        text: "↩"
+        color: Color.menu.text
+        width: Style.space(52)
+        horizontalAlignment: Text.AlignHCenter
+        font.pixelSize: Style.font.body
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: orow.label
         color: Color.menu.text
         font.family: Style.font.menuFamily
         font.pixelSize: Style.font.caption
         font.letterSpacing: Style.space(1)
       }
-
-      Rectangle {
-        id: stTrack
-        width: Style.space(52)
-        height: Style.space(24)
-        radius: height / 2
-        anchors.verticalCenter: parent.verticalCenter
-        color: st.on ? Color.menu.selectedBackground : "transparent"
-        border.color: st.on ? Color.menu.selectedBackground : Color.menu.border
-        border.width: 1
-        Behavior on color { ColorAnimation { duration: 100 } }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          x: st.on ? Style.space(7) : stTrack.width - implicitWidth - Style.space(7)
-          text: st.on ? "ON" : "OFF"
-          color: st.on ? Color.menu.selectedText : Color.menu.text
-          opacity: st.on ? 1 : 0.6
-          font.family: Style.font.menuFamily
-          font.pixelSize: Style.font.caption - 2
-          font.bold: true
-        }
-
-        Rectangle {
-          width: stTrack.height - Style.space(6)
-          height: width
-          radius: width / 2
-          y: Style.space(3)
-          x: st.on ? stTrack.width - width - Style.space(3) : Style.space(3)
-          color: st.on ? Color.menu.selectedText : Color.menu.text
-          Behavior on x { NumberAnimation { duration: 100 } }
-        }
-      }
     }
 
-    MouseArea { anchors.fill: parent; onClicked: st.flipped() }
+    // The whole row is the target, name included. Aiming for a 52-pixel track
+    // is a worse gesture than aiming for the option.
+    MouseArea { anchors.fill: parent; onClicked: orow.fired() }
   }
 
   // ---- keyboard-first: everything a click can do, off the home row. One
@@ -247,13 +358,8 @@ BarWidget {
     if (!t || t.td) return
     Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
     root.markPicked(root.sel, "-", "")
-    root.markSat(root.sel, false)
-  }
-  function satSel() {
-    var t = tileModel.get(root.sel)
-    if (!t || t.td) return
-    Quickshell.execDetached(["td-tint", "--window", t.address, "--saturate", "toggle"])
-    root.markSat(root.sel, !t.sat)
+    root.mark(root.sel, "sat", false)
+    root.mark(root.sel, "crt", root.crtAvailable)
   }
   function tdSel() {
     var t = tileModel.get(root.sel)
@@ -261,24 +367,40 @@ BarWidget {
     Quickshell.execDetached(["terminal-delight", "ctl", "paint", "on", "--pid", String(t.pid)])
     root.paintDismiss(true)
   }
-  function satAll(on) {
-    for (var i = 0; i < tileModel.count; i++) {
-      var t = tileModel.get(i)
-      if (t.td) continue
-      Quickshell.execDetached(["td-tint", "--window", t.address, "--saturate", on ? "on" : "off"])
-      root.markSat(i, on)
-    }
+  // One tile, one switch. A tile is skipped when it is a Terminal Delight
+  // window (it has its own picker) or when the switch cannot work here.
+  function switchTile(i, kind, on) {
+    var t = tileModel.get(i)
+    if (!t || t.td) return
+    if (kind === "crt" && !root.crtAvailable) return
+    Quickshell.execDetached(["td-tint", "--window", t.address,
+                             root.switches[kind].flag, on ? "on" : "off"])
+    root.mark(i, kind, on)
   }
-  // The global toggle mirrors the switch it drives: everything cranked ->
-  // pour it all back, anything dry -> crank it all.
-  function satAllToggle() { root.satAll(!root.allSat) }
+  function switchSel(kind) {
+    var t = tileModel.get(root.sel)
+    if (!t) return
+    root.switchTile(root.sel, kind, !t[root.switches[kind].field])
+  }
+  function switchAll(kind, on) {
+    for (var i = 0; i < tileModel.count; i++) root.switchTile(i, kind, on)
+  }
+  // The global toggle mirrors the switch it drives: everything on -> turn it
+  // all off, anything off -> turn it all on.
+  function switchAllToggle(kind) {
+    root.switchAll(kind, !(kind === "crt" ? root.allCrt : root.allSat))
+  }
+
   function resetAll() {
     for (var i = 0; i < tileModel.count; i++) {
       var t = tileModel.get(i)
       if (t.td) continue
       Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
       root.markPicked(i, "-", "")
-      root.markSat(i, false)
+      root.mark(i, "sat", false)
+      // --clear hands the tube back too, so the model has to say so or the
+      // rail's CRT ALL keeps claiming a state the tiles no longer hold.
+      root.mark(i, "crt", root.crtAvailable)
     }
   }
 
@@ -417,7 +539,8 @@ BarWidget {
     }
     if (!st || !st.tiles || !st.monitor) return
     console.log("td-paint: state — " + st.tiles.length + " tile(s), "
-                + (st.themes ? st.themes.length : 0) + " themes")
+                + (st.themes ? st.themes.length : 0) + " themes, crt="
+                + (st.crt && st.crt.available ? "available" : "unavailable"))
 
     // where the keyboard opens: on the tile you were just working in
     var focusAddr = st.focused || ""
@@ -440,6 +563,7 @@ BarWidget {
         th: t.size[1],
         picked: t.variant || "",
         src: t.source === "omarchy" ? "omarchy" : "",
+        crt: t.crt === true,
         sat: t.saturated === true
       })
     })
@@ -451,8 +575,14 @@ BarWidget {
       tileModel.append(tiles[t])
       if (tiles[t].address === focusAddr) root.sel = t
     }
-    root.refreshAllSat()
+    root.refreshAll("sat")
+    root.refreshAll("crt")
     root.cards = root.sanitizeCards(st.themes, "theme")
+    root.crtAvailable = !!(st.crt && st.crt.available === true)
+    // The desktop's theme is a key from the same list, so it gets the same
+    // regex — a name that could not be a card cannot be a marker either.
+    root.desktopTheme = (typeof st.desktop_theme === "string"
+                         && root.keyRe.test(st.desktop_theme)) ? st.desktop_theme : ""
 
     if (oscCount === 0 && anyTd) {
       // A pure Terminal Delight workspace needs no layer at all — hand the
@@ -557,19 +687,31 @@ BarWidget {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
           root.tdSel(); event.accepted = true; return
         }
-        // Space saturates the selected tile, Backspace hands it back to the
-        // desktop. Both used to be letters — `s` and `d` — and both were
-        // wrong for the same reason: a lowercase letter belongs to a theme
-        // NAME, and `s` was already stealing `solitude`. Verbs live on keys
-        // that can never be a name, and the two workspace-wide verbs stay on
-        // SHIFTED letters, which the name-matching path never sees.
-        if (event.key === Qt.Key_Space) { root.satSel(); event.accepted = true; return }
-        if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
-          root.clearSel(); event.accepted = true; return
+        // THREE OPTIONS, THREE DIGITS, and Ctrl widens the same digit from
+        // this tile to the whole workspace. Digits and not letters because
+        // every lowercase letter belongs to a theme NAME — `s` was stealing
+        // `solitude`, `d` was one `dracula` away — and not shifted letters
+        // either, which is where they went first: S/C/R are three unrelated
+        // words to remember, where 1/2/3 is one row of keys and Ctrl is the
+        // scope. A theme whose name begins with a digit was never reachable
+        // from the keyboard anyway; the name matcher only ever looked at a-z.
+        var scoped = (event.modifiers & Qt.ControlModifier) !== 0
+        if (event.key === Qt.Key_1) {
+          if (scoped) root.switchAllToggle("sat"); else root.switchSel("sat")
+          event.accepted = true; return
         }
+        if (event.key === Qt.Key_2) {
+          if (scoped) root.switchAllToggle("crt"); else root.switchSel("crt")
+          event.accepted = true; return
+        }
+        if (event.key === Qt.Key_3) {
+          if (scoped) root.resetAll(); else root.clearSel()
+          event.accepted = true; return
+        }
+        // The list is read fresh on every summon; F5 re-reads WITHOUT closing,
+        // for the theme you installed in the window behind this one.
+        if (event.key === Qt.Key_F5) { root.paintOpen(); event.accepted = true; return }
         var ch = event.text
-        if (ch === "S") { root.satAllToggle(); event.accepted = true; return }
-        if (ch === "R") { root.resetAll(); event.accepted = true; return }
         if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
     }
@@ -589,6 +731,7 @@ BarWidget {
         property string pickedNow: model.picked
         property string pickedSrc: model.src
         property bool satNow: model.sat
+        property bool crtNow: model.crt
         readonly property bool onDesktop: pickedNow === "" || pickedNow === "-"
         readonly property bool tileSel: index === root.sel
         x: model.tx
@@ -596,19 +739,16 @@ BarWidget {
         width: model.tw
         height: model.th
 
-        // the spotlight: unselected tiles wear TWO extra coats of the theme's
-        // own scrim (three with the base), the selected one only the base —
-        // the lit tile reads from across the room
+        // The spotlight: unselected tiles wear an extra coat of the theme's
+        // own scrim, the selected one none, so the lit tile reads from across
+        // the room. It used to be two full coats, and on a six-tile workspace
+        // that was not a spotlight — it was a blackout, with five unreadable
+        // cards and no way to compare them. Half a coat separates them; a
+        // whole one hides them.
         Rectangle {
           anchors.fill: parent
           color: Color.menu.scrim
-          opacity: tileSel ? 0 : 1
-          Behavior on opacity { NumberAnimation { duration: 120 } }
-        }
-        Rectangle {
-          anchors.fill: parent
-          color: Color.menu.scrim
-          opacity: tileSel ? 0 : 1
+          opacity: tileSel ? 0 : 0.55
           Behavior on opacity { NumberAnimation { duration: 120 } }
         }
 
@@ -628,7 +768,7 @@ BarWidget {
         Rectangle {
           id: card
           anchors.centerIn: parent
-          width: Math.min(parent.width - Style.space(24), Style.space(620))
+          width: Math.min(parent.width - Style.space(24), Style.space(740))
           height: content.implicitHeight + Style.spacing.panelPadding * 2
           radius: Style.cornerRadius
           color: Color.menu.background
@@ -637,8 +777,8 @@ BarWidget {
           // exactly backward — it vanishes into the card fill)
           border.color: tileSel ? Color.menu.text : Color.menu.border
           border.width: tileSel ? 3 : Math.max(1, Style.space(1))
-          opacity: tileSel ? 1 : 0.3
-          scale: tileSel ? 1 : 0.94
+          opacity: tileSel ? 1 : 0.62
+          scale: tileSel ? 1 : 0.96
           Behavior on opacity { NumberAnimation { duration: 120 } }
           Behavior on scale { NumberAnimation { duration: 120 } }
 
@@ -709,11 +849,11 @@ BarWidget {
                 width: grid.width
                 spacing: Style.spacing.sm
 
-                // the ⟲ card first: back to whatever the desktop theme says.
+                // the ↩ card first: back to whatever the desktop theme says.
                 // Lit while the tile follows the desktop (no recorded variant).
                 Rectangle {
-                  width: Style.space(78)
-                  height: Style.space(78)
+                  width: Style.space(112)
+                  height: Style.space(96)
                   radius: Style.cornerRadius
                   color: onDesktop ? Color.menu.selectedBackground : "transparent"
                   border.color: Color.menu.border
@@ -723,12 +863,12 @@ BarWidget {
                     spacing: Style.space(2)
                     Text {
                       anchors.horizontalCenter: parent.horizontalCenter
-                      text: "⟲"
+                      text: "↩"
                       color: onDesktop ? Color.menu.selectedText : Color.menu.text
                       font.pixelSize: Style.font.heading
                     }
                     // The key IS the label. Same two-Text mechanism as the
-                    // theme cards below — the ⟲ card's name is ours and could
+                    // theme cards below — the ↩ card's name is ours and could
                     // safely be rich text, but a picker where one card is drawn
                     // by a different code path is a picker where one card drifts.
                     Row {
@@ -777,49 +917,58 @@ BarWidget {
                     // whatever theme happens to share its name.
                     readonly property bool lit: modelData.key === pickedNow
                                                 && pickedSrc === "omarchy"
-                    width: Style.space(78)
-                    height: Style.space(78)
+                    // The theme the desktop itself is wearing. Marked, not
+                    // hidden: it is a perfectly good thing to paint a tile
+                    // with, and knowing which one it is turns the grid into a
+                    // set of deviations from something rather than a wall.
+                    readonly property bool isDesktop: modelData.key === root.desktopTheme
+                    width: Style.space(112)
+                    height: Style.space(96)
                     radius: Style.cornerRadius
-                    // the entry's own two colours ARE the data being chosen —
-                    // this border is content, not chrome; the current pick gets
-                    // a thicker ring and a wash of its own accent
-                    color: lit ? Qt.alpha(acc, 0.16) : "transparent"
-                    border.color: acc
-                    border.width: lit ? 2 : 1
+                    // THE CARD IS THE THEME. Its fill is that theme's own
+                    // background and its text is that theme's own foreground,
+                    // so the card is not a label for a colour scheme — it is a
+                    // small worked example of one, and a light theme looks
+                    // light from across the room.
+                    //
+                    // The first cut drew a 36x26 chip on a transparent card and
+                    // it did not survive contact with a real box: twenty-three
+                    // near-black chips at that size are twenty-three identical
+                    // grey rectangles, and the grid could not be read at all.
+                    color: modelData.bg
+                    border.color: lit ? acc
+                                      : (isDesktop ? Color.menu.text : Qt.alpha(acc, 0.65))
+                    border.width: lit ? 3 : (isDesktop ? 2 : 1)
+                    // A theme gets no glyph and should not be given one: what
+                    // tells Osaka Jade from Tokyo Night IS the colour. So the
+                    // card draws three lines of "code" in the theme's own
+                    // accent, foreground and partner — the thing the card
+                    // actually does — and writes the name underneath in that
+                    // same foreground. If the name is hard to read on the
+                    // card, the terminal will be hard to read too, and you
+                    // have learned that before clicking rather than after.
                     Column {
-                      anchors.centerIn: parent
-                      spacing: Style.space(2)
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      anchors.leftMargin: Style.space(12)
+                      anchors.rightMargin: Style.space(12)
+                      spacing: Style.space(5)
 
-                      // A theme gets no glyph and should not be given one: what tells
-                      // Osaka Jade from Tokyo Night IS the colour. So the face is a small
-                      // terminal drawn in the theme's own background, accent and
-                      // foreground — the thing the card actually does, rather than a face
-                      // invented for it.
                       Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: Style.space(36)
-                        height: Style.space(26)
-                        radius: Style.space(4)
-                        color: modelData.bg
-                        border.color: Qt.alpha(cardTile.acc, 0.55)
-                        border.width: 1
-                        Column {
-                          anchors.centerIn: parent
-                          spacing: Style.space(3)
-                          Rectangle {
-                            width: Style.space(19); height: Style.space(3)
-                            radius: Style.space(2); color: cardTile.acc
-                          }
-                          Rectangle {
-                            width: Style.space(13); height: Style.space(3)
-                            radius: Style.space(2); color: modelData.fg
-                          }
-                          Rectangle {
-                            width: Style.space(16); height: Style.space(3)
-                            radius: Style.space(2); color: modelData.partner
-                          }
-                        }
+                        width: parent.width * 0.86; height: Style.space(4)
+                        radius: Style.space(2); color: cardTile.acc
                       }
+                      Rectangle {
+                        width: parent.width * 0.58; height: Style.space(4)
+                        radius: Style.space(2); color: modelData.fg; opacity: 0.9
+                      }
+                      Rectangle {
+                        width: parent.width * 0.72; height: Style.space(4)
+                        radius: Style.space(2); color: modelData.partner
+                      }
+
+                      Item { width: 1; height: Style.space(6) }
                       // Press the FIRST LETTER to paint, so the first letter is
                       // drawn the way it is pressed: seven points up, Black
                       // weight, underlined, at full strength, and inked in the
@@ -831,16 +980,21 @@ BarWidget {
                       // Two plain Text items rather than one rich one: the label
                       // is a name written in another repository, and a draw path
                       // that never assembles markup cannot be made to render any.
+                      // The letter you press, in the theme's accent, ahead of
+                      // the rest of the name in the theme's foreground. Two
+                      // plain Text items rather than one rich one: the name is
+                      // a directory on someone else's machine, and a draw path
+                      // that never assembles markup cannot be made to render
+                      // any.
                       Row {
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
                         Text {
                           id: initial
                           textFormat: Text.PlainText
                           text: modelData.label.charAt(0).toUpperCase()
-                          color: acc
-                          opacity: 1
+                          color: cardTile.acc
                           font.family: Style.font.menuFamily
-                          font.pixelSize: Style.font.caption + 7
+                          font.pixelSize: Style.font.caption + 5
                           font.weight: Font.Black
                           font.underline: true
                         }
@@ -848,25 +1002,35 @@ BarWidget {
                           anchors.baseline: initial.baseline
                           textFormat: Text.PlainText
                           text: modelData.label.slice(1).toUpperCase()
-                          color: Color.menu.text
-                          opacity: lit ? 0.8 : 0.6
+                          color: modelData.fg
+                          opacity: lit ? 1 : 0.85
                           font.family: Style.font.menuFamily
                           font.pixelSize: Style.font.caption
-                          // Theme names run long where palette keys never did
-                          // (`catppuccin-latte` is sixteen characters). Elide
-                          // inside the card rather than let one name set the
-                          // width of every card in the grid.
-                          width: Math.max(0, cardTile.width - initial.width - Style.space(8))
+                          // `catppuccin-latte` is sixteen characters where a
+                          // palette key was never more than nine. Elide inside
+                          // the card rather than let one name set the width of
+                          // every card in the grid.
+                          width: Math.max(0, parent.width - initial.width)
                           elide: Text.ElideRight
                         }
                       }
-                      Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: Style.space(38)
-                        height: Style.space(3)
-                        radius: Style.space(1)
-                        color: modelData.partner
-                      }
+                    }
+
+                    // The theme the desktop is wearing, named on the card that
+                    // is wearing it. A ring alone said "this one is different"
+                    // without saying how.
+                    Text {
+                      visible: cardTile.isDesktop
+                      anchors.top: parent.top
+                      anchors.right: parent.right
+                      anchors.margins: Style.space(6)
+                      textFormat: Text.PlainText
+                      text: "DESKTOP"
+                      color: modelData.fg
+                      opacity: 0.75
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.caption - 3
+                      font.letterSpacing: Style.space(1)
                     }
                     MouseArea {
                       anchors.fill: parent
@@ -884,14 +1048,34 @@ BarWidget {
             // SATURATE — crank this tile's text to the Terminal Delight look.
             // One switch that shows its state; td-tint's record carries the
             // truth and --sync re-applies it.
-            SatToggle {
+            // What a tile can be beyond its colour: how hard the text burns,
+            // whether it sits behind curved glass, and the way back. Across,
+            // because a tile card is wide and short — the rail runs the same
+            // three down a column for the opposite reason. The CRT option is
+            // absent on a box without the per-window warp rather than present
+            // and inert.
+            Row {
               visible: !model.td
               anchors.horizontalCenter: parent.horizontalCenter
-              label: "SATURATE"
-              on: satNow
-              onFlipped: {
-                Quickshell.execDetached(["td-tint", "--window", tileAddress, "--saturate", "toggle"])
-                root.markSat(tileIndex, !satNow)
+              spacing: Style.spacing.lg
+
+              OptionRow {
+                anchors.verticalCenter: parent.verticalCenter
+                keys: "1"; label: "SATURATE"; on: satNow
+                onFired: root.switchTile(tileIndex, "sat", !satNow)
+              }
+
+              OptionRow {
+                visible: root.crtAvailable
+                anchors.verticalCenter: parent.verticalCenter
+                keys: "2"; label: "CRT"; on: crtNow
+                onFired: root.switchTile(tileIndex, "crt", !crtNow)
+              }
+
+              OptionRow {
+                anchors.verticalCenter: parent.verticalCenter
+                keys: "3"; label: "DESKTOP"; toggle: false
+                onFired: { root.sel = tileIndex; root.clearSel() }
               }
             }
 
@@ -930,45 +1114,55 @@ BarWidget {
           font.letterSpacing: Style.space(2)
         }
 
+        // Where the cards came from, said out loud. The count is read at
+        // summon, so it is also the proof that the list is this machine's
+        // right now rather than something baked in — and naming the desktop's
+        // own theme is what makes "back to the desktop" a place, not an idea.
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.spacing.md
+          spacing: Style.space(10)
 
-          SatToggle {
+          Text {
             anchors.verticalCenter: parent.verticalCenter
-            label: "SATURATE ALL"
-            on: root.allSat
-            onFlipped: root.satAll(!root.allSat)
+            textFormat: Text.PlainText
+            text: root.cards.length + " OMARCHY THEMES ON THIS MACHINE"
+                + (root.desktopTheme ? "  ·  DESKTOP WEARS " + root.desktopTheme.toUpperCase() : "")
+            color: Color.menu.text
+            opacity: 0.55
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+            font.letterSpacing: Style.space(1)
           }
 
-          Rectangle {
+          KeyCap {
             anchors.verticalCenter: parent.verticalCenter
-            width: resetAllLabel.implicitWidth + Style.space(24)
-            height: Style.space(30)
-            radius: Style.cornerRadius
-            color: "transparent"
-            border.color: Color.menu.border
-            border.width: 1
-            Text {
-              id: resetAllLabel
-              anchors.centerIn: parent
-              text: "⟲  RESET DEFAULTS"
-              color: Color.menu.text
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.caption
-            }
-            MouseArea { anchors.fill: parent; onClicked: root.resetAll() }
+            keys: "F5"
           }
         }
 
-        Text {
+        // The same three options as a tile, one per line. Down a column
+        // because the rail is narrow and tall where a tile card is wide and
+        // short, and because a list of chords reading top to bottom is the
+        // shape this desktop already uses for exactly this.
+        Column {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "←→ select · letter picks a theme (again for the next match) · "
-              + "␣ saturate · ⌫ desktop · S all · R reset · ⏎ TD picker · esc done"
-          color: Color.menu.text
-          opacity: 0.5
-          font.family: Style.font.menuFamily
-          font.pixelSize: Style.font.caption
+          spacing: Style.space(4)
+
+          OptionRow {
+            keys: "CTRL 1"; label: "SATURATE ALL"; on: root.allSat
+            onFired: root.switchAllToggle("sat")
+          }
+
+          OptionRow {
+            visible: root.crtAvailable
+            keys: "CTRL 2"; label: "CRT ALL"; on: root.allCrt
+            onFired: root.switchAllToggle("crt")
+          }
+
+          OptionRow {
+            keys: "CTRL 3"; label: "RESET DEFAULTS"; toggle: false
+            onFired: root.resetAll()
+          }
         }
       }
     }
