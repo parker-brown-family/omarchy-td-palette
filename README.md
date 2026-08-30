@@ -14,14 +14,15 @@ accent and foreground, and labelled in the colour that theme writes text in. If
 the name is hard to read on the card, the terminal will be hard to read too, and
 you have learned that before clicking rather than after.
 
-A rail across the top acts on every tile at once: **SATURATE ALL**, **CRT ALL**,
-**RESET DEFAULTS** — and it tells you how many themes this machine has, which one
-the desktop is wearing, and that `F5` re-reads the list without closing.
+A rail across the top acts on every tile at once — **SATURATE ALL**, **CRT ALL**,
+**RESET DEFAULTS**, one per line with its chord beside it — and tells you how
+many themes this machine has and which one the desktop is wearing. Each tile
+carries the same three across its own card.
 
 - **foot / Alacritty / kitty / Ghostty / WezTerm** — the card floats over the
   window; a pick runs `td-tint --window <address> --theme <name>`, which writes
   that theme's OSC palette down the terminal's own tty and puts the matching
-  gradient on its window border. Runtime-only, dies with the window; the ⟲
+  gradient on its window border. Runtime-only, dies with the window; the ↩
   DESKTOP card hands the tile back to the desktop theme.
 - **Terminal Delight** — its story is better than a window tint (per-pane,
   persistent, CRT-identity-preserving), so its card is a single handoff that
@@ -146,26 +147,34 @@ Pick any free chord — `omarchy menu keybindings --print` lists what's taken.
 
 While the overlay is up it plays entirely from the keyboard:
 
+Three options, three digits, and **Ctrl widens the same digit** from the
+selected tile to the whole workspace:
+
+| Key | This tile | With Ctrl — every tile |
+|---|---|---|
+| **1** | SATURATE | SATURATE ALL |
+| **2** | CRT | CRT ALL |
+| **3** | back to the desktop theme | RESET DEFAULTS |
+
 | Key | Means |
 |---|---|
 | ← → ↑ ↓ / Tab | walk the tiles in reading order |
 | any letter | paint the selected tile with the first theme whose name starts with it; press it again to walk to the next match |
-| Space | toggle SATURATE on the selected tile |
-| ⇧ Space | toggle CRT on the selected tile |
-| Backspace | hand the selected tile back to the desktop theme |
-| S | toggle SATURATE ALL |
-| C | toggle CRT ALL |
-| R | reset every tile to defaults |
 | F5 | re-read the theme list without closing |
 | ⏎ | Terminal Delight's own pane picker |
 | Esc | done — brushes away everywhere |
 
-**Letters are names, everything else is a verb.** Every lowercase letter belongs
-to a theme, so no verb may take one: `s` would have stolen `solitude`, `o` would
-have stolen `osaka-jade`, and `d` was safe only until someone installs `dracula`.
-The workspace-wide verbs sit on shifted letters, which the name matcher never
-sees, and the two per-tile switches share one key because Shift is what makes it
-the other switch.
+**Letters are names, digits are verbs.** Every lowercase letter belongs to a
+theme, so no verb may take one: `s` would have stolen `solitude`, `o` would have
+stolen `osaka-jade`, and `d` was safe only until someone installs `dracula`.
+Shifted letters were the first fix and a worse one — `S`/`C`/`R` are three
+unrelated words to remember, where 1/2/3 is one row of keys and Ctrl is the
+scope. A theme whose name begins with a digit was never reachable from the
+keyboard anyway; the matcher only ever looked at `a-z`.
+
+There is no legend across the bottom of the overlay. Every key is drawn on the
+control it works, which is a hint you read once instead of one you re-read every
+time or never.
 
 ## The three repos
 

@@ -180,63 +180,130 @@ BarWidget {
   // One switch, everywhere: label + a chunky track that SAYS which state it
   // is in. The knob slides, the track fills, and the word ON/OFF sits in the
   // empty half — state you can read from across the room, mouse-clickable.
-  component SatToggle: Item {
-    id: st
-    property string label: "SATURATE"
+  // A chord, drawn the way Omarchy's own keybindings menu draws one. It sits
+  // ON the control it works, which is what lets the legend line go: a hint
+  // beside the thing it describes is read once and never needed again, where
+  // a strip of prose at the bottom of the overlay is read every time or not
+  // at all.
+  component KeyCap: Rectangle {
+    id: kc
+    property string keys: ""
+    implicitWidth: kcText.implicitWidth + Style.space(18)
+    implicitHeight: Style.space(24)
+    radius: Style.space(4)
+    color: "transparent"
+    border.color: Color.menu.border
+    border.width: 1
+
+    Text {
+      id: kcText
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: kc.keys
+      color: Color.menu.text
+      opacity: 0.8
+      font.family: Style.font.menuFamily
+      font.pixelSize: Style.font.caption - 1
+      font.letterSpacing: Style.space(1)
+    }
+  }
+
+  // The track, and only the track. It used to carry its own label, which it
+  // could not keep doing once the same three options had to read [key][state]
+  // [name] down a column in the rail and across a row on a tile — a component
+  // that hard-codes its own composition can do one of those, not both.
+  component Switch: Rectangle {
+    id: sw
     property bool on: false
-    signal flipped()
-    implicitWidth: stRow.implicitWidth
+    width: Style.space(52)
+    height: Style.space(24)
+    radius: height / 2
+    color: sw.on ? Color.menu.selectedBackground : "transparent"
+    border.color: sw.on ? Color.menu.selectedBackground : Color.menu.border
+    border.width: 1
+    Behavior on color { ColorAnimation { duration: 100 } }
+
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      x: sw.on ? Style.space(7) : sw.width - implicitWidth - Style.space(7)
+      text: sw.on ? "ON" : "OFF"
+      color: sw.on ? Color.menu.selectedText : Color.menu.text
+      opacity: sw.on ? 1 : 0.6
+      font.family: Style.font.menuFamily
+      font.pixelSize: Style.font.caption - 2
+      font.bold: true
+    }
+
+    Rectangle {
+      width: sw.height - Style.space(6)
+      height: width
+      radius: width / 2
+      y: Style.space(3)
+      x: sw.on ? sw.width - width - Style.space(3) : Style.space(3)
+      color: sw.on ? Color.menu.selectedText : Color.menu.text
+      Behavior on x { NumberAnimation { duration: 100 } }
+    }
+  }
+
+  // One option: the key that fires it, its state, and its name. `toggle:
+  // false` is for the one that has no state to show — RESET happens, it is
+  // not a condition — and it still occupies the switch's width so the names
+  // stay in a column instead of stepping left on the last row.
+  component OptionRow: Item {
+    id: orow
+    property string keys: ""
+    property string label: ""
+    property bool on: false
+    property bool toggle: true
+    signal fired()
+    implicitWidth: orowRow.implicitWidth
     implicitHeight: Style.space(30)
 
     Row {
-      id: stRow
+      id: orowRow
       spacing: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
 
+      KeyCap {
+        anchors.verticalCenter: parent.verticalCenter
+        keys: orow.keys
+      }
+
+      Switch {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: orow.toggle
+        on: orow.on
+      }
+
+      // ↩ and not ⟲, which is the obvious glyph and the one this was written
+      // with: JetBrainsMono has no circular arrow at any of U+27F2, U+21BA,
+      // U+21BB or U+2B6E, so it rendered as tofu on every screenshot until
+      // somebody looked closely. A hooked left arrow is in the font and says
+      // the same thing.
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: st.label
+        visible: !orow.toggle
+        text: "↩"
+        color: Color.menu.text
+        width: Style.space(52)
+        horizontalAlignment: Text.AlignHCenter
+        font.pixelSize: Style.font.body
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: orow.label
         color: Color.menu.text
         font.family: Style.font.menuFamily
         font.pixelSize: Style.font.caption
         font.letterSpacing: Style.space(1)
       }
-
-      Rectangle {
-        id: stTrack
-        width: Style.space(52)
-        height: Style.space(24)
-        radius: height / 2
-        anchors.verticalCenter: parent.verticalCenter
-        color: st.on ? Color.menu.selectedBackground : "transparent"
-        border.color: st.on ? Color.menu.selectedBackground : Color.menu.border
-        border.width: 1
-        Behavior on color { ColorAnimation { duration: 100 } }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          x: st.on ? Style.space(7) : stTrack.width - implicitWidth - Style.space(7)
-          text: st.on ? "ON" : "OFF"
-          color: st.on ? Color.menu.selectedText : Color.menu.text
-          opacity: st.on ? 1 : 0.6
-          font.family: Style.font.menuFamily
-          font.pixelSize: Style.font.caption - 2
-          font.bold: true
-        }
-
-        Rectangle {
-          width: stTrack.height - Style.space(6)
-          height: width
-          radius: width / 2
-          y: Style.space(3)
-          x: st.on ? stTrack.width - width - Style.space(3) : Style.space(3)
-          color: st.on ? Color.menu.selectedText : Color.menu.text
-          Behavior on x { NumberAnimation { duration: 100 } }
-        }
-      }
     }
 
-    MouseArea { anchors.fill: parent; onClicked: st.flipped() }
+    // The whole row is the target, name included. Aiming for a 52-pixel track
+    // is a worse gesture than aiming for the option.
+    MouseArea { anchors.fill: parent; onClicked: orow.fired() }
   }
 
   // ---- keyboard-first: everything a click can do, off the home row. One
@@ -620,29 +687,31 @@ BarWidget {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
           root.tdSel(); event.accepted = true; return
         }
-        // Space saturates the selected tile, Backspace hands it back to the
-        // desktop. Both used to be letters — `s` and `d` — and both were
-        // wrong for the same reason: a lowercase letter belongs to a theme
-        // NAME, and `s` was already stealing `solitude`. Verbs live on keys
-        // that can never be a name, and the two workspace-wide verbs stay on
-        // SHIFTED letters, which the name-matching path never sees.
-        // Shift makes it the OTHER switch on the same tile. Both are
-        // per-tile state, both are a toggle, and pairing them on one key is
-        // what keeps CRT off the alphabet.
-        if (event.key === Qt.Key_Space) {
-          root.switchSel((event.modifiers & Qt.ShiftModifier) ? "crt" : "sat")
+        // THREE OPTIONS, THREE DIGITS, and Ctrl widens the same digit from
+        // this tile to the whole workspace. Digits and not letters because
+        // every lowercase letter belongs to a theme NAME — `s` was stealing
+        // `solitude`, `d` was one `dracula` away — and not shifted letters
+        // either, which is where they went first: S/C/R are three unrelated
+        // words to remember, where 1/2/3 is one row of keys and Ctrl is the
+        // scope. A theme whose name begins with a digit was never reachable
+        // from the keyboard anyway; the name matcher only ever looked at a-z.
+        var scoped = (event.modifiers & Qt.ControlModifier) !== 0
+        if (event.key === Qt.Key_1) {
+          if (scoped) root.switchAllToggle("sat"); else root.switchSel("sat")
+          event.accepted = true; return
+        }
+        if (event.key === Qt.Key_2) {
+          if (scoped) root.switchAllToggle("crt"); else root.switchSel("crt")
+          event.accepted = true; return
+        }
+        if (event.key === Qt.Key_3) {
+          if (scoped) root.resetAll(); else root.clearSel()
           event.accepted = true; return
         }
         // The list is read fresh on every summon; F5 re-reads WITHOUT closing,
         // for the theme you installed in the window behind this one.
         if (event.key === Qt.Key_F5) { root.paintOpen(); event.accepted = true; return }
-        if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
-          root.clearSel(); event.accepted = true; return
-        }
         var ch = event.text
-        if (ch === "S") { root.switchAllToggle("sat"); event.accepted = true; return }
-        if (ch === "C") { root.switchAllToggle("crt"); event.accepted = true; return }
-        if (ch === "R") { root.resetAll(); event.accepted = true; return }
         if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
     }
@@ -780,7 +849,7 @@ BarWidget {
                 width: grid.width
                 spacing: Style.spacing.sm
 
-                // the ⟲ card first: back to whatever the desktop theme says.
+                // the ↩ card first: back to whatever the desktop theme says.
                 // Lit while the tile follows the desktop (no recorded variant).
                 Rectangle {
                   width: Style.space(112)
@@ -794,12 +863,12 @@ BarWidget {
                     spacing: Style.space(2)
                     Text {
                       anchors.horizontalCenter: parent.horizontalCenter
-                      text: "⟲"
+                      text: "↩"
                       color: onDesktop ? Color.menu.selectedText : Color.menu.text
                       font.pixelSize: Style.font.heading
                     }
                     // The key IS the label. Same two-Text mechanism as the
-                    // theme cards below — the ⟲ card's name is ours and could
+                    // theme cards below — the ↩ card's name is ours and could
                     // safely be rich text, but a picker where one card is drawn
                     // by a different code path is a picker where one card drifts.
                     Row {
@@ -979,29 +1048,34 @@ BarWidget {
             // SATURATE — crank this tile's text to the Terminal Delight look.
             // One switch that shows its state; td-tint's record carries the
             // truth and --sync re-applies it.
-            // The two things a tile can be beyond its colour: how hard the
-            // text burns, and whether it sits behind curved glass. Side by
-            // side, because they are the same kind of choice about the same
-            // tile — and the CRT switch is simply absent on a box without the
-            // per-window warp, rather than present and inert.
+            // What a tile can be beyond its colour: how hard the text burns,
+            // whether it sits behind curved glass, and the way back. Across,
+            // because a tile card is wide and short — the rail runs the same
+            // three down a column for the opposite reason. The CRT option is
+            // absent on a box without the per-window warp rather than present
+            // and inert.
             Row {
               visible: !model.td
               anchors.horizontalCenter: parent.horizontalCenter
-              spacing: Style.spacing.md
+              spacing: Style.spacing.lg
 
-              SatToggle {
+              OptionRow {
                 anchors.verticalCenter: parent.verticalCenter
-                label: "SATURATE"
-                on: satNow
-                onFlipped: root.switchTile(tileIndex, "sat", !satNow)
+                keys: "1"; label: "SATURATE"; on: satNow
+                onFired: root.switchTile(tileIndex, "sat", !satNow)
               }
 
-              SatToggle {
+              OptionRow {
                 visible: root.crtAvailable
                 anchors.verticalCenter: parent.verticalCenter
-                label: "CRT"
-                on: crtNow
-                onFlipped: root.switchTile(tileIndex, "crt", !crtNow)
+                keys: "2"; label: "CRT"; on: crtNow
+                onFired: root.switchTile(tileIndex, "crt", !crtNow)
+              }
+
+              OptionRow {
+                anchors.verticalCenter: parent.verticalCenter
+                keys: "3"; label: "DESKTOP"; toggle: false
+                onFired: { root.sel = tileIndex; root.clearSel() }
               }
             }
 
@@ -1044,67 +1118,51 @@ BarWidget {
         // summon, so it is also the proof that the list is this machine's
         // right now rather than something baked in — and naming the desktop's
         // own theme is what makes "back to the desktop" a place, not an idea.
-        Text {
-          anchors.horizontalCenter: parent.horizontalCenter
-          textFormat: Text.PlainText
-          text: root.cards.length + " OMARCHY THEMES ON THIS MACHINE"
-              + (root.desktopTheme ? "  ·  DESKTOP WEARS " + root.desktopTheme.toUpperCase() : "")
-              + "  ·  F5 RE-READS"
-          color: Color.menu.text
-          opacity: 0.55
-          font.family: Style.font.menuFamily
-          font.pixelSize: Style.font.caption
-          font.letterSpacing: Style.space(1)
-        }
-
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.spacing.md
+          spacing: Style.space(10)
 
-          SatToggle {
+          Text {
             anchors.verticalCenter: parent.verticalCenter
-            label: "SATURATE ALL"
-            on: root.allSat
-            onFlipped: root.switchAllToggle("sat")
+            textFormat: Text.PlainText
+            text: root.cards.length + " OMARCHY THEMES ON THIS MACHINE"
+                + (root.desktopTheme ? "  ·  DESKTOP WEARS " + root.desktopTheme.toUpperCase() : "")
+            color: Color.menu.text
+            opacity: 0.55
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+            font.letterSpacing: Style.space(1)
           }
 
-          SatToggle {
-            visible: root.crtAvailable
+          KeyCap {
             anchors.verticalCenter: parent.verticalCenter
-            label: "CRT ALL"
-            on: root.allCrt
-            onFlipped: root.switchAllToggle("crt")
-          }
-
-          Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            width: resetAllLabel.implicitWidth + Style.space(24)
-            height: Style.space(30)
-            radius: Style.cornerRadius
-            color: "transparent"
-            border.color: Color.menu.border
-            border.width: 1
-            Text {
-              id: resetAllLabel
-              anchors.centerIn: parent
-              text: "⟲  RESET DEFAULTS"
-              color: Color.menu.text
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.caption
-            }
-            MouseArea { anchors.fill: parent; onClicked: root.resetAll() }
+            keys: "F5"
           }
         }
 
-        Text {
+        // The same three options as a tile, one per line. Down a column
+        // because the rail is narrow and tall where a tile card is wide and
+        // short, and because a list of chords reading top to bottom is the
+        // shape this desktop already uses for exactly this.
+        Column {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "←→ select · letter picks a theme (again for the next match) · "
-              + "␣ saturate" + (root.crtAvailable ? " · ⇧␣ CRT" : "") + " · ⌫ desktop · "
-              + "S" + (root.crtAvailable ? "/C" : "") + " all · R reset · ⏎ TD picker · esc done"
-          color: Color.menu.text
-          opacity: 0.5
-          font.family: Style.font.menuFamily
-          font.pixelSize: Style.font.caption
+          spacing: Style.space(4)
+
+          OptionRow {
+            keys: "CTRL 1"; label: "SATURATE ALL"; on: root.allSat
+            onFired: root.switchAllToggle("sat")
+          }
+
+          OptionRow {
+            visible: root.crtAvailable
+            keys: "CTRL 2"; label: "CRT ALL"; on: root.allCrt
+            onFired: root.switchAllToggle("crt")
+          }
+
+          OptionRow {
+            keys: "CTRL 3"; label: "RESET DEFAULTS"; toggle: false
+            onFired: root.resetAll()
+          }
         }
       }
     }
