@@ -1,15 +1,22 @@
 # Terminal Paint
 
-A painter's palette in the Omarchy bar. Click it and **every terminal tile on
-your active workspace** grows a picker card — 🦇 ☢ 🤡 🌊 🔥 and the rest of
-the [Terminal Delight](https://github.com/parker-brown-family/terminal-delight)
-variant family. Click a glyph on a card and *that tile* takes that identity:
+**Give every terminal on the workspace its own Omarchy theme.**
+
+Click the palette in the bar and each terminal tile grows a picker card
+holding every theme installed on the box — Osaka Jade, Vantablack, Tokyo
+Night, whatever you have — each drawn as a small terminal in that theme's own
+background, accent and foreground. Click one and *that tile* wears it. Same
+colours the theme grid would put on the whole desktop; the only difference is
+how far they reach.
+
+A rail across the top does the workspace at once: SATURATE ALL and RESET
+DEFAULTS.
 
 - **foot / Alacritty / kitty / Ghostty / WezTerm** — the card floats over the
-  window; a pick runs `td-tint --window <address> <variant>`, which writes the
-  variant's OSC palette down that terminal's own tty and puts the matching
-  gradient on its window border. Runtime-only, dies with the window; the ⟲
-  DESKTOP card hands the tile back to the desktop theme.
+  window; a pick runs `td-tint --window <address> --theme <name>`, which
+  writes that theme's OSC palette down the terminal's own tty and puts the
+  matching gradient on its window border. Runtime-only, dies with the window;
+  the ⟲ DESKTOP card hands the tile back to the desktop theme.
 - **Terminal Delight** — its story is better than a window tint (per-pane,
   persistent, CRT-identity-preserving), so its card is a single handoff that
   raises TD's own in-app pane picker over its control socket and gets out of
@@ -23,7 +30,7 @@ brushes away everywhere.
 Plugins are unsandboxed, so here is the whole footprint:
 
 - **Runs, on summon:** one command — `td-tint --state`, the oracle that reports
-  the installed variant list and where the terminal tiles are. **Runs, on a card
+  the installed themes and where the terminal tiles are. **Runs, on a card
   click:** `td-tint --window …` or `terminal-delight ctl paint …`. **Runs, on an
   empty workspace:** one transient `notify-send` saying so. Nothing resident,
   nothing polled.
@@ -37,17 +44,18 @@ Plugins are unsandboxed, so here is the whole footprint:
 
 ### What it trusts, and what it checks
 
-The variant set is not ours. Keys, glyphs and colours are authored in whatever
-theme repository installed them ([variants.toml](https://github.com/parker-brown-family/omarchy-terminal-delight-theme/blob/main/variants.toml)
-→ `install-variants.sh`) and reach this plugin over a pipe, so `--state` output
-is treated as third-party input and normalised at one boundary before anything
-downstream sees it:
+The theme list is not ours in any sense. The names are **directory names**
+from `~/.config/omarchy/themes` and Omarchy's own share — anyone's, including
+a theme cloned from a stranger's repo an hour ago — and the colours are
+whatever that theme's `colors.toml` says. It reaches this plugin over a pipe,
+so `--state` output is treated as third-party input and normalised by one
+function at one boundary before anything downstream sees it:
 
 | Field | Accepted | Why it matters |
 |---|---|---|
-| `key` | `^[a-z0-9][a-z0-9-]{0,31}$` | it is the card label, the keyboard letter **and** an argv word — so it may carry no markup, and may never begin with `-` |
-| `glyph` | plain text, ≤ 8 chars | drawn as `Text.PlainText`; never sniffed, never interpreted |
-| `accent`, `partner` | `#rgb` / `#rrggbb` / `#aarrggbb` | they land in a string→color coercion |
+| `key` | `^[a-z0-9][a-z0-9-]{0,31}$` | it is an argv word — so it may carry no markup, and may never begin with `-` |
+| `label` | plain text, ≤ 28 chars, control characters stripped | drawn, never executed; it is also the letter the keyboard matches |
+| `accent`, `partner`, `bg`, `fg` | `#rgb` / `#rrggbb` / `#aarrggbb` | they land in a string→color coercion |
 | window address | `^0x[0-9a-f]{1,16}$` | it is the argv word behind `--window`, and a filename inside `td-tint`'s run dir |
 
 A record that does not fit is dropped, not repaired. Card labels are built from
@@ -58,9 +66,10 @@ gated on the collector draining rather than on a timer, and a document past
 
 ## Requirements
 
-- The Terminal Delight variant set installed
+- **`td-tint`** on `PATH`, current enough to report `themes` from
+  `td-tint --state` and accept `--theme`
   ([omarchy-terminal-delight-theme](https://github.com/parker-brown-family/omarchy-terminal-delight-theme)
-  → `./install-variants.sh`), which also puts `td-tint` on `PATH`.
+  → `./install-variants.sh` installs it).
 - For Terminal Delight windows: a `terminal-delight` build with the control
   socket (`feat/td-paint-mode` or later). Terminals started from older builds
   can't be reached — reopen them.
@@ -90,13 +99,19 @@ While the overlay is up it plays entirely from the keyboard:
 | Key | Means |
 |---|---|
 | ← → ↑ ↓ / Tab | walk the tiles in reading order |
-| first letter | paint the selected tile — every variant owns its own letter |
-| d | hand the selected tile back to the desktop theme |
-| s | toggle SATURATE on the selected tile |
+| any letter | paint the selected tile with the first theme whose name starts with it; press it again to walk to the next match |
+| Space | toggle SATURATE on the selected tile |
+| Backspace | hand the selected tile back to the desktop theme |
 | S | toggle SATURATE ALL |
 | R | reset every tile to defaults |
 | ⏎ | Terminal Delight's own pane picker |
 | Esc | done — brushes away everywhere |
+
+**Letters are names, everything else is a verb.** Every lowercase letter
+belongs to a theme, so no verb may take one: `s` would have stolen
+`solitude`, `o` would have stolen `osaka-jade`, and `d` was safe only until
+someone installs `dracula`. The two workspace-wide verbs sit on shifted
+letters, which the name matcher never sees.
 
 ## The three repos
 

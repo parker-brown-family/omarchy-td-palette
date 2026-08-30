@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "id": "brownfamilysports.td-palette",
   "name": "Terminal Paint",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Parker Brown",
   "license": "MIT",
-  "description": "Raise Terminal Delight's per-pane paint overlay on the active workspace",
+  "description": "Give every terminal tile on the workspace its own Omarchy theme",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Terminal Paint",
-    "description": "Raise Terminal Delight's per-pane paint overlay on the active workspace",
+    "description": "Give every terminal tile on the workspace its own Omarchy theme",
     "category": "Terminal",
     "allowMultiple": false
   }

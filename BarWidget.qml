@@ -14,8 +14,27 @@ import qs.Ui
 // qmllint disable uncreatable-type missing-property unqualified
 
 // Terminal Paint — the painter's palette in the tray, and the workspace
-// overlay it raises: Terminal Delight's "PAINT THIS PANE" picker, floated
-// over every terminal TILE on the active workspace.
+// overlay it raises: a "PAINT THIS TERMINAL" picker floated over every
+// terminal TILE on the active workspace.
+//
+// The colours are OMARCHY'S OWN — every theme installed on this box, aimed at
+// ONE tile instead of the whole desktop. It is the same colors.toml, down the
+// same tty, through the same OSC that a theme switch would use; the only
+// difference is how far it reaches.
+//
+// There is no second list and no source switch. Terminal Delight ships eleven
+// hand-made palettes and they are good, but a picker that offers our set
+// beside the desktop's is a picker asking you to hold an opinion about whose
+// colours are better before you can paint a terminal. Omarchy's set is larger,
+// maintained by people who do this, and already the vocabulary you chose your
+// desktop from — and Terminal Delight is IN it, as one theme, so nothing is
+// out of reach. `td-tint cherry` still wears a palette from a prompt.
+//
+// The practical dividend: every lowercase letter belongs to a theme NAME. A
+// verb bound to one steals it — `o` was the source switch and `osaka-jade`
+// wanted it, `s` was saturate and `solitude` wanted it, and `d` was safe only
+// until someone installs `dracula`. So the rule here is absolute: letters
+// name themes, everything else is a verb.
 //
 // The shell cannot paint inside another client, but it can float a layer
 // above the tiling and put a card in the middle of each terminal window. A
@@ -47,9 +66,9 @@ BarWidget {
   function open() { root.paintOpen() }
   function close() { root.paintDismiss(false) }
 
-  // What a summon snapshot found: installed variants and the terminal tiles
+  // What a summon snapshot found: the installed themes, and the terminal tiles
   // (monitor-local rects) of the active workspace.
-  property var variants: []
+  property var cards: []
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -89,8 +108,14 @@ BarWidget {
 
   // Optimistic card state: a click fires the command AND marks the model, so
   // the open overlay reflects the pick immediately; reopening re-reads the
-  // records, which remain the truth.
-  function markPicked(i, key) { tileModel.setProperty(i, "picked", key) }
+  // records, which remain the truth. The source is marked with the key: a
+  // tile wearing a Terminal Delight palette from the command line has a pick
+  // this picker cannot show, and it must light no card rather than the card
+  // of whatever theme happens to share its name.
+  function markPicked(i, key, src) {
+    tileModel.setProperty(i, "picked", key)
+    tileModel.setProperty(i, "src", src === undefined ? "omarchy" : src)
+  }
   function markSat(i, on) { tileModel.setProperty(i, "sat", on); root.refreshAllSat() }
 
   // The workspace-wide crank state the global toggle shows: ON only when
@@ -180,14 +205,39 @@ BarWidget {
     var n = tileModel.count
     if (n > 0) root.sel = ((root.sel + d) % n + n) % n
   }
+
+  // The argv that paints ONE window. `--theme` carries its own name rather
+  // than leaving it positional, because td-tint knows two namespaces and a
+  // word in both must never be resolved by guesswork.
+  function paintArgs(addr, key) {
+    return ["td-tint", "--window", addr, "--theme", key]
+  }
+
+  function applyCard(i, c) {
+    var t = tileModel.get(i)
+    if (!t || t.td) return
+    Quickshell.execDetached(root.paintArgs(t.address, c.key))
+    root.markPicked(i, c.key)  // SATURATE rides along: td-tint keeps it
+  }
+
+  // A letter jumps to the first theme whose NAME starts with it, and pressing
+  // it again walks to the next one that does. Three themes start with `c`
+  // here and three with `r`, so a letter cannot own one card; cycling is the
+  // only thing that works, and it costs nothing, because painting is instant
+  // and Backspace puts it back.
   function applyLetter(ch) {
     var t = tileModel.get(root.sel)
     if (!t || t.td) return
-    for (var i = 0; i < root.variants.length; i++) {
-      var v = root.variants[i]
-      if (v.key.charAt(0) === ch) {
-        Quickshell.execDetached(["td-tint", "--window", t.address, "--", v.key])
-        root.markPicked(root.sel, v.key)  // SATURATE rides along: td-tint keeps it
+    var cards = root.cards
+    if (!cards.length) return
+    var start = 0
+    for (var j = 0; j < cards.length; j++) {
+      if (cards[j].key === t.picked && t.src === "omarchy") { start = j + 1; break }
+    }
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[(start + i) % cards.length]
+      if (c.label.charAt(0).toLowerCase() === ch) {
+        root.applyCard(root.sel, c)
         return
       }
     }
@@ -196,7 +246,7 @@ BarWidget {
     var t = tileModel.get(root.sel)
     if (!t || t.td) return
     Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
-    root.markPicked(root.sel, "-")
+    root.markPicked(root.sel, "-", "")
     root.markSat(root.sel, false)
   }
   function satSel() {
@@ -227,7 +277,7 @@ BarWidget {
       var t = tileModel.get(i)
       if (t.td) continue
       Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
-      root.markPicked(i, "-")
+      root.markPicked(i, "-", "")
       root.markSat(i, false)
     }
   }
@@ -256,6 +306,11 @@ BarWidget {
     // closing cleanly still surfaces something rather than hanging the summon.
     // qmllint disable signal-handler-parameters
     onExited: function (exitCode, exitStatus) {
+      // …unless the document already landed. Exit normally arrives AFTER the
+      // stream closes, and re-arming here fired the watchdog two seconds into
+      // every successful summon: a no-op guarded by the run token, but a log
+      // line that read like a failure on the happy path.
+      if (root.snapTaken === root.snapRun) return
       snapWatchdog.restart()
     }
     // qmllint enable signal-handler-parameters
@@ -273,18 +328,21 @@ BarWidget {
   }
 
   // The trust boundary, and the reason the rest of this file can be read as
-  // if the oracle were honest. `td-tint --state` reports a variant set this
-  // plugin does not author: the keys, glyphs and colours are written in
-  // whatever theme repository installed them (`variants.toml` →
-  // `install-variants.sh`) and arrive here over a pipe. Every label drawn
-  // below, every tile colour, and every argv word handed to `td-tint` is built
-  // from that list — so the list is normalised HERE, once, and a record that
-  // does not fit the shape is dropped rather than repaired.
+  // if the oracle were honest. The theme list `td-tint --state` reports is not
+  // ours in any sense: the names are DIRECTORY NAMES from
+  // ~/.config/omarchy/themes and Omarchy's own share — anyone's, including a
+  // theme cloned from a stranger's repo an hour ago — and the colours are
+  // whatever that theme's colors.toml says. Every label drawn below, every
+  // card colour, and every argv word handed to `td-tint` is built from that
+  // list, so it is normalised HERE, once, and a record that does not fit the
+  // shape is dropped rather than repaired.
   //
-  //   key      the identity AND the argv word AND the keyboard letter. Lower
-  //            alphanumeric with inner dashes, never leading `-`: it can carry
-  //            no markup, and it can never be read by td-tint as a flag.
-  //   glyph    one short display grapheme, drawn as plain text.
+  //   key      the identity AND the argv word. Lower alphanumeric with inner
+  //            dashes, never leading `-`: it can carry no markup, and it can
+  //            never be read by td-tint as a flag.
+  //   label    what a human reads, and the letter the keyboard matches.
+  //            Display only — never argv — so it may carry spaces and case,
+  //            but control characters are cut and the length is capped.
   //   colours  #rgb / #rrggbb / #aarrggbb only — anything else lands in a
   //            string→color coercion whose failure modes are not ours.
   readonly property var keyRe: /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -294,23 +352,44 @@ BarWidget {
   // traversal and no leading dash can reach either.
   readonly property var addrRe: /^0x[0-9a-fA-F]{1,16}$/
 
-  function sanitizeVariants(list) {
+  // A colour we would otherwise coerce from an unchecked string, with the
+  // fallback stated rather than left to Qt: an invalid colour string reads as
+  // black, and a black accent on a black card is an invisible card.
+  function hexOr(v, fallback) {
+    return (typeof v === "string" && root.hexRe.test(v)) ? v : fallback
+  }
+
+  function sanitizeCards(list, what) {
     if (!Array.isArray(list)) return []
     var out = []
-    for (var i = 0; i < list.length && out.length < 64; i++) {
+    // 96 rather than 64: a well-stocked box carries more themes than there
+    // are palettes, and a picker that silently stops at some of them is worse
+    // than one that draws a long grid.
+    for (var i = 0; i < list.length && out.length < 96; i++) {
       var v = list[i]
       if (!v || typeof v.key !== "string" || !root.keyRe.test(v.key)) continue
       if (typeof v.accent !== "string" || !root.hexRe.test(v.accent)) continue
       if (typeof v.partner !== "string" || !root.hexRe.test(v.partner)) continue
+      var label = typeof v.label === "string" && v.label.length ? v.label : v.key
+      label = label.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 28)
+      if (!label.length) continue
       out.push({
         key: v.key,
-        glyph: typeof v.glyph === "string" ? v.glyph.slice(0, 8) : "",
+        label: label,
         accent: v.accent,
-        partner: v.partner
+        partner: v.partner,
+        // taste-ok (rule 3): not a colour this plugin chose to draw — it is
+        // the floor under a card whose OWN background failed validation. A
+        // theme swatch has to be drawn on something, and a themed surface
+        // here would misreport the theme being previewed as darker or
+        // lighter than it is.
+        bg: root.hexOr(v.bg, "#000000"),  // taste-ok: the floor, not a choice
+        fg: root.hexOr(v.fg, v.accent)
       })
     }
     var dropped = list.length - out.length
-    if (dropped > 0) console.log("td-paint: dropped " + dropped + " malformed variant record(s)")
+    if (dropped > 0)
+      console.log("td-paint: dropped " + dropped + " malformed " + what + " record(s)")
     return out
   }
 
@@ -338,7 +417,7 @@ BarWidget {
     }
     if (!st || !st.tiles || !st.monitor) return
     console.log("td-paint: state — " + st.tiles.length + " tile(s), "
-                + (st.variants ? st.variants.length : 0) + " variants")
+                + (st.themes ? st.themes.length : 0) + " themes")
 
     // where the keyboard opens: on the tile you were just working in
     var focusAddr = st.focused || ""
@@ -360,6 +439,7 @@ BarWidget {
         tw: t.size[0],
         th: t.size[1],
         picked: t.variant || "",
+        src: t.source === "omarchy" ? "omarchy" : "",
         sat: t.saturated === true
       })
     })
@@ -372,7 +452,7 @@ BarWidget {
       if (tiles[t].address === focusAddr) root.sel = t
     }
     root.refreshAllSat()
-    root.variants = root.sanitizeVariants(st.variants)
+    root.cards = root.sanitizeCards(st.themes, "theme")
 
     if (oscCount === 0 && anyTd) {
       // A pure Terminal Delight workspace needs no layer at all — hand the
@@ -385,7 +465,17 @@ BarWidget {
         "Nothing to paint", "No terminal windows on this workspace."])
       return
     }
-    console.log("td-paint: overlay up — " + tileModel.count + " tile(s), " + root.variants.length + " variants")
+    // No colours is a different failure from no terminals, and saying so is
+    // the difference between "my themes are missing" and a grid of empty
+    // cards the user is left to interpret.
+    if (root.cards.length === 0) {
+      Quickshell.execDetached(["notify-send", "-a", "Terminal Paint", "-e",
+        "No themes to paint with",
+        "td-tint reported no installed Omarchy themes. Is td-tint current?"])
+      return
+    }
+    console.log("td-paint: overlay up — " + tileModel.count + " tile(s), "
+                + root.cards.length + " theme card(s)")
     root.opened = true
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
@@ -397,7 +487,8 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "🎨"
-    tooltipText: "Paint terminals — left: pick per tile · middle: TD panes everywhere · right: done painting"
+    tooltipText: "Paint terminals — left: give each tile its own Omarchy theme · "
+               + "middle: TD panes everywhere · right: done painting"
 
     // Left paints HERE (the workspace you are looking at), middle raises
     // Terminal Delight's pane picker on every workspace, right lowers every
@@ -466,11 +557,19 @@ BarWidget {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
           root.tdSel(); event.accepted = true; return
         }
+        // Space saturates the selected tile, Backspace hands it back to the
+        // desktop. Both used to be letters — `s` and `d` — and both were
+        // wrong for the same reason: a lowercase letter belongs to a theme
+        // NAME, and `s` was already stealing `solitude`. Verbs live on keys
+        // that can never be a name, and the two workspace-wide verbs stay on
+        // SHIFTED letters, which the name-matching path never sees.
+        if (event.key === Qt.Key_Space) { root.satSel(); event.accepted = true; return }
+        if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
+          root.clearSel(); event.accepted = true; return
+        }
         var ch = event.text
         if (ch === "S") { root.satAllToggle(); event.accepted = true; return }
         if (ch === "R") { root.resetAll(); event.accepted = true; return }
-        if (ch === "s") { root.satSel(); event.accepted = true; return }
-        if (ch === "d") { root.clearSel(); event.accepted = true; return }
         if (ch >= "a" && ch <= "z") { root.applyLetter(ch); event.accepted = true }
       }
     }
@@ -478,6 +577,7 @@ BarWidget {
     Repeater {
       model: tileModel
       delegate: Item {
+        id: tileRoot
         required property var model
         required property int index
         // the inner variant Repeater runs its delegates in required-property
@@ -487,6 +587,7 @@ BarWidget {
         property string tileAddress: model.address
         property int tileIndex: index
         property string pickedNow: model.picked
+        property string pickedSrc: model.src
         property bool satNow: model.sat
         readonly property bool onDesktop: pickedNow === "" || pickedNow === "-"
         readonly property bool tileSel: index === root.sel
@@ -587,123 +688,193 @@ BarWidget {
               }
             }
 
-            Flow {
+            // The grid grows with the list — a well-stocked box carries thirty
+            // themes where there are eleven palettes — but never past the
+            // terminal it is drawn in. Past that it scrolls, which beats a
+            // card spilling out of its own tile and over its neighbours.
+            Flickable {
+              id: grid
               visible: !model.td
               width: parent.width
-              spacing: Style.spacing.sm
+              height: Math.min(gridFlow.implicitHeight,
+                               Math.max(Style.space(160), tileRoot.height - Style.space(200)))
+              contentHeight: gridFlow.implicitHeight
+              contentWidth: width
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              interactive: contentHeight > height
 
-              // the ⟲ card first: back to whatever the desktop theme says.
-              // Lit while the tile follows the desktop (no recorded variant).
-              Rectangle {
-                width: Style.space(64)
-                height: Style.space(64)
-                radius: Style.cornerRadius
-                color: onDesktop ? Color.menu.selectedBackground : "transparent"
-                border.color: Color.menu.border
-                border.width: onDesktop ? 2 : 1
-                Column {
-                  anchors.centerIn: parent
-                  spacing: Style.space(2)
-                  Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "⟲"
-                    color: onDesktop ? Color.menu.selectedText : Color.menu.text
-                    font.pixelSize: Style.font.heading
-                  }
-                  Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    // the key IS the label — d, worn big, bold and underlined
-                    textFormat: Text.RichText
-                    text: "<span style=\"font-size:" + (Style.font.caption + 4)
-                      + "px\"><b><u>D</u></b></span>ESKTOP"
-                    color: onDesktop ? Color.menu.selectedText : Color.menu.text
-                    opacity: onDesktop ? 1 : 0.65
-                    font.family: Style.font.menuFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-                MouseArea {
-                  anchors.fill: parent
-                  onClicked: {
-                    Quickshell.execDetached(["td-tint", "--window", tileAddress, "--clear"])
-                    root.markPicked(tileIndex, "-")
-                  }
-                }
-              }
+              Flow {
+                id: gridFlow
+                width: grid.width
+                spacing: Style.spacing.sm
 
-              Repeater {
-                model: root.variants
-                delegate: Rectangle {
-                  required property var modelData
-                  // string → color coercion happens on the typed property,
-                  // which is what makes Qt.alpha below safe to call
-                  readonly property color acc: modelData.accent
-                  readonly property bool lit: modelData.key === pickedNow
-                  width: Style.space(64)
-                  height: Style.space(64)
+                // the ⟲ card first: back to whatever the desktop theme says.
+                // Lit while the tile follows the desktop (no recorded variant).
+                Rectangle {
+                  width: Style.space(78)
+                  height: Style.space(78)
                   radius: Style.cornerRadius
-                  // the variant's own two colours ARE the data being chosen —
-                  // this border is content, not chrome; the current pick gets
-                  // a thicker ring and a wash of its own accent
-                  color: lit ? Qt.alpha(acc, 0.16) : "transparent"
-                  border.color: acc
-                  border.width: lit ? 2 : 1
+                  color: onDesktop ? Color.menu.selectedBackground : "transparent"
+                  border.color: Color.menu.border
+                  border.width: onDesktop ? 2 : 1
                   Column {
                     anchors.centerIn: parent
                     spacing: Style.space(2)
                     Text {
                       anchors.horizontalCenter: parent.horizontalCenter
-                      // stated, not inferred: AutoText would sniff this string
-                      // and the string is not ours to trust
-                      textFormat: Text.PlainText
-                      text: modelData.glyph
+                      text: "⟲"
+                      color: onDesktop ? Color.menu.selectedText : Color.menu.text
                       font.pixelSize: Style.font.heading
                     }
-                    // Press the FIRST LETTER to paint, so the first letter is
-                    // the loud one: bold, underlined, four points up. Two plain
-                    // Text items rather than one rich one — the label is built
-                    // from a name written in another repository, and a draw
-                    // path that never assembles markup cannot be made to render
-                    // any. The typography is identical; only the mechanism moved
-                    // from a string of HTML to the font properties themselves.
+                    // The key IS the label. Same two-Text mechanism as the
+                    // theme cards below — the ⟲ card's name is ours and could
+                    // safely be rich text, but a picker where one card is drawn
+                    // by a different code path is a picker where one card drifts.
                     Row {
                       anchors.horizontalCenter: parent.horizontalCenter
                       Text {
-                        id: initial
+                        id: dInitial
                         textFormat: Text.PlainText
-                        text: modelData.key.charAt(0).toUpperCase()
-                        color: Color.menu.text
-                        opacity: 0.85
+                        text: "D"
+                        color: onDesktop ? Color.menu.selectedText : Color.menu.text
+                        opacity: 1
                         font.family: Style.font.menuFamily
-                        font.pixelSize: Style.font.caption + 4
-                        font.bold: true
+                        font.pixelSize: Style.font.caption + 7
+                        font.weight: Font.Black
                         font.underline: true
                       }
                       Text {
-                        anchors.baseline: initial.baseline
+                        anchors.baseline: dInitial.baseline
                         textFormat: Text.PlainText
-                        text: modelData.key.slice(1).toUpperCase()
-                        color: Color.menu.text
-                        opacity: 0.85
+                        text: "ESKTOP"
+                        color: onDesktop ? Color.menu.selectedText : Color.menu.text
+                        opacity: onDesktop ? 0.8 : 0.55
                         font.family: Style.font.menuFamily
                         font.pixelSize: Style.font.caption
                       }
-                    }
-                    Rectangle {
-                      anchors.horizontalCenter: parent.horizontalCenter
-                      width: Style.space(34)
-                      height: Style.space(3)
-                      radius: Style.space(1)
-                      color: modelData.partner
                     }
                   }
                   MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                      Quickshell.execDetached(["td-tint", "--window", tileAddress, "--", modelData.key])
-                      // SATURATE rides along — td-tint carries it across coats
-                      root.markPicked(tileIndex, modelData.key)
-                      root.sel = tileIndex
+                      Quickshell.execDetached(["td-tint", "--window", tileAddress, "--clear"])
+                      root.markPicked(tileIndex, "-", "")
+                    }
+                  }
+                }
+
+                Repeater {
+                  model: root.cards
+                  delegate: Rectangle {
+                    id: cardTile
+                    required property var modelData
+                    // string → color coercion happens on the typed property,
+                    // which is what makes Qt.alpha below safe to call
+                    readonly property color acc: modelData.accent
+                    // A tile wearing a Terminal Delight palette from a prompt has a pick
+                    // this picker cannot show — it lights nothing, rather than the card of
+                    // whatever theme happens to share its name.
+                    readonly property bool lit: modelData.key === pickedNow
+                                                && pickedSrc === "omarchy"
+                    width: Style.space(78)
+                    height: Style.space(78)
+                    radius: Style.cornerRadius
+                    // the entry's own two colours ARE the data being chosen —
+                    // this border is content, not chrome; the current pick gets
+                    // a thicker ring and a wash of its own accent
+                    color: lit ? Qt.alpha(acc, 0.16) : "transparent"
+                    border.color: acc
+                    border.width: lit ? 2 : 1
+                    Column {
+                      anchors.centerIn: parent
+                      spacing: Style.space(2)
+
+                      // A theme gets no glyph and should not be given one: what tells
+                      // Osaka Jade from Tokyo Night IS the colour. So the face is a small
+                      // terminal drawn in the theme's own background, accent and
+                      // foreground — the thing the card actually does, rather than a face
+                      // invented for it.
+                      Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: Style.space(36)
+                        height: Style.space(26)
+                        radius: Style.space(4)
+                        color: modelData.bg
+                        border.color: Qt.alpha(cardTile.acc, 0.55)
+                        border.width: 1
+                        Column {
+                          anchors.centerIn: parent
+                          spacing: Style.space(3)
+                          Rectangle {
+                            width: Style.space(19); height: Style.space(3)
+                            radius: Style.space(2); color: cardTile.acc
+                          }
+                          Rectangle {
+                            width: Style.space(13); height: Style.space(3)
+                            radius: Style.space(2); color: modelData.fg
+                          }
+                          Rectangle {
+                            width: Style.space(16); height: Style.space(3)
+                            radius: Style.space(2); color: modelData.partner
+                          }
+                        }
+                      }
+                      // Press the FIRST LETTER to paint, so the first letter is
+                      // drawn the way it is pressed: seven points up, Black
+                      // weight, underlined, at full strength, and inked in the
+                      // variant's OWN accent so the key also previews the colour
+                      // it applies. The rest of the name falls back to caption
+                      // size at 0.6 — the contrast is the point, and a name is
+                      // only there to confirm what the glyph already said.
+                      //
+                      // Two plain Text items rather than one rich one: the label
+                      // is a name written in another repository, and a draw path
+                      // that never assembles markup cannot be made to render any.
+                      Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        Text {
+                          id: initial
+                          textFormat: Text.PlainText
+                          text: modelData.label.charAt(0).toUpperCase()
+                          color: acc
+                          opacity: 1
+                          font.family: Style.font.menuFamily
+                          font.pixelSize: Style.font.caption + 7
+                          font.weight: Font.Black
+                          font.underline: true
+                        }
+                        Text {
+                          anchors.baseline: initial.baseline
+                          textFormat: Text.PlainText
+                          text: modelData.label.slice(1).toUpperCase()
+                          color: Color.menu.text
+                          opacity: lit ? 0.8 : 0.6
+                          font.family: Style.font.menuFamily
+                          font.pixelSize: Style.font.caption
+                          // Theme names run long where palette keys never did
+                          // (`catppuccin-latte` is sixteen characters). Elide
+                          // inside the card rather than let one name set the
+                          // width of every card in the grid.
+                          width: Math.max(0, cardTile.width - initial.width - Style.space(8))
+                          elide: Text.ElideRight
+                        }
+                      }
+                      Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: Style.space(38)
+                        height: Style.space(3)
+                        radius: Style.space(1)
+                        color: modelData.partner
+                      }
+                    }
+                    MouseArea {
+                      anchors.fill: parent
+                      onClicked: {
+                        // SATURATE rides along — td-tint carries it across coats
+                        root.applyCard(tileIndex, modelData)
+                        root.sel = tileIndex
+                      }
                     }
                   }
                 }
@@ -792,7 +963,8 @@ BarWidget {
 
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "←→ select · letter paints · d desktop · s saturate · S all · R reset · ⏎ TD picker · esc done"
+          text: "←→ select · letter picks a theme (again for the next match) · "
+              + "␣ saturate · ⌫ desktop · S all · R reset · ⏎ TD picker · esc done"
           color: Color.menu.text
           opacity: 0.5
           font.family: Style.font.menuFamily
