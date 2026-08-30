@@ -121,6 +121,10 @@ gated on the collector draining rather than on a timer, and a document past
 - **For the CRT switches:** the per-window warp, from that same repo's
   `./install-curve.sh` — which reloads Hyprland for you, no relogin. Without
   it the switches are simply not drawn.
+
+If a switch is missing or a card is the wrong colour, that repo's `./bin/doctor`
+says which of those requirements is not actually met on your box, and how to fix
+it. A hidden CRT switch and a broken one look identical from here.
 - **For Terminal Delight windows:** a `terminal-delight` build with the control
   socket (`feat/td-paint-mode` or later). Terminals started from older builds
   can't be reached — reopen them.
