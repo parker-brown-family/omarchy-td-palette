@@ -31,8 +31,14 @@ jobs:
       - name: verify
         run: ./bin/verify
 
+      # This one stubs everything Omarchy, so unlike bin/keys-e2e it does run
+      # here — and it is worth the step, because the guard it covers fails in
+      # the deploying direction when it fails at all.
+      - name: the deploy guard falls the right way
+        run: ./bin/check-deploy
+
       # bin/keys-e2e is deliberately absent from CI: it needs a compositor, a
       # running Omarchy shell and synthesised key events. Shellcheck it here so
       # the test that cannot run in CI is at least not rotting in it.
       - name: shellcheck the scripts
-        run: sudo apt-get install -y --no-install-recommends shellcheck && shellcheck -S warning bin/verify bin/keys-e2e bin/shoot bin/check-shots bin/check-listing
+        run: sudo apt-get install -y --no-install-recommends shellcheck && shellcheck -S warning bin/verify bin/keys-e2e bin/shoot bin/check-shots bin/check-listing bin/deploy bin/check-deploy
