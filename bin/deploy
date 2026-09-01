@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Update the installed copy of this plugin — unless the session is locked.
+#
+#   bin/deploy                show the incoming diff, then ask
+#   bin/deploy --yes          take it without asking, which is what an agent wants
+#
+# It deploys what is on `origin`, not what is in your working tree, so push
+# first. Run it from a clone or from the installed copy; either works.
+#
+# `omarchy plugin update` is the right command and this only guards it. On
+# Omarchy 4.0.1 with quickshell 0.3.1 that command is loaded against a locked
+# session: it writes under ~/.config/omarchy/plugins/ and then asks the shell to
+# rescan, and either half tears down the live WlSessionLock and aborts the shell
+# under the lockscreen (omarchy#8647). You do not lose the session — Hyprland's
+# failsafe holds the screen and the shell relaunches — but you lose the bar, and
+# `omarchy-restart-shell` then declines to help, because it will not restart a
+# locked session.
+#
+# omarchy#7572 fixes this in the shell, where it belongs. Its CLI guards reach
+# only `plugin add` and `plugin clone`, but the deferral it adds to
+# `reloadPlugins()` and the skip it adds to `_syncServices()` are blind to what
+# caused the write, so they cover this path too. That PR has been open and
+# unreviewed since 2026-08-20. Until it lands, a deploy into a locked box is one
+# `git pull` away from the abort, so this asks first.
+#
+# Exit 0 updated or already current, 1 failed, 3 declined because the session is
+# locked — a caller can sleep on 3 and come back.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+need() { command -v "$1" >/dev/null || { echo "deploy: need $1" >&2; exit 1; }; }
+
+# Ask twice, the way omarchy-restart-shell does. `omarchy-hyprland-session-locked`
+# reads Hyprland's solitaryBlockedBy, and LOCK stays set there after the lock
+# client dies — so on its own it would refuse forever on a box already bitten by
+# this bug, which is the trap being complained about rather than a guard against
+# it. Only a lock the shell still calls secure or requested is worth deferring
+# for. An unreachable lock service reads as unlocked, deliberately: that means
+# there is no shell holding a lock, and therefore none to abort.
+session_lock_is_live() {
+  omarchy-hyprland-session-locked || return 1
+  [[ "$(OMARCHY_SHELL_IPC_TIMEOUT=0.5s omarchy-shell lock status 2>/dev/null |
+        jq -r '.secure or .requested' 2>/dev/null)" == "true" ]]
+}
+
+main() {
+  need jq
+  need omarchy
+  # The coarse check is the guard itself. Missing, everything below would sail
+  # through as "unlocked", so say so rather than deploying blind.
+  need omarchy-hyprland-session-locked
+
+  local id dir
+  id="$(jq -r '.id // ""' "$root/manifest.json" 2>/dev/null)"
+  [[ -n $id ]] || { echo "deploy: no id in $root/manifest.json" >&2; return 1; }
+
+  dir="$HOME/.config/omarchy/plugins/$id"
+  [[ -d $dir ]] || {
+    echo "deploy: $id is not installed — omarchy plugin add https://github.com/parker-brown-family/omarchy-td-palette.git --enable" >&2
+    return 1
+  }
+
+  if session_lock_is_live; then
+    printf 'deploy: the session is locked, so nothing was written.\n\n' >&2
+    printf '  Writing under the plugins dir while locked aborts the Omarchy\n' >&2
+    printf '  shell (omarchy#8647). Unlock the screen and run this again.\n' >&2
+    return 3
+  fi
+
+  omarchy plugin update "$id" "$@"
+}
+
+# `omarchy plugin update` rewrites the files under it, and this script is one of
+# them whenever it runs from the installed copy. Bash reads a script as it goes,
+# so everything above is definitions and the line below is the whole program: by
+# the time any file changes, the parser is already past the end of this one.
+main "$@"; exit $?

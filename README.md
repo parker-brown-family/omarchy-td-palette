@@ -214,7 +214,24 @@ and [#8647](https://github.com/omacom/omarchy/issues/8647), fixed by the open
 [#7572](https://github.com/omacom/omarchy/pull/7572), with the underlying defect
 at [quickshell#962](https://github.com/quickshell-mirror/quickshell/issues/962).
 It applies to every Omarchy plugin equally. Until #7572 lands, run
-`omarchy plugin add` and `omarchy plugin update` against an unlocked session.
+`omarchy plugin add` against an unlocked session, and update with `bin/deploy`,
+which checks for you.
+
+## Update
+
+```bash
+~/.config/omarchy/plugins/brownfamilysports.td-palette/bin/deploy --yes
+```
+
+Drop `--yes` to see the incoming diff and be asked. This is
+`omarchy plugin update brownfamilysports.td-palette` with the check above in
+front of it: `bin/deploy` asks whether the session lock is live and exits 3
+rather than writing into a locked session. Nothing else differs — it hands off
+to `omarchy plugin update`, which still shows the diff, still validates what it
+pulled, and still rolls the plugin back if that validation fails.
+
+Exit 3 is the one worth branching on. An unattended deploy can sleep on it and
+come back, rather than reading a locked screen as a failure.
 
 ## Remove
 

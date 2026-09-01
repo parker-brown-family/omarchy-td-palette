@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Walk bin/deploy's branches against a stubbed Omarchy, and check each one.
+#
+#   bin/check-deploy
+#
+# The guard in bin/deploy fails silently in the direction that costs you: a
+# lock check that cannot answer looks exactly like an unlocked session, and the
+# deploy proceeds into the abort. So the cases worth pinning are not "does it
+# work" but "which way does it fall" — a stranded lock must NOT wedge the
+# deploy, and a missing lock checker must NOT sail through it.
+#
+# Everything Omarchy is stubbed on PATH and $HOME is a fixture, so this touches
+# no plugin dir and runs on a bare CI runner, unlike bin/keys-e2e.
+set -uo pipefail
+
+deploy="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deploy"
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+
+mkdir -p "$T/bin" "$T/home/.config/omarchy/plugins/brownfamilysports.td-palette"
+printf '#!/usr/bin/env bash\necho "STUB omarchy $*"\n' >"$T/bin/omarchy"
+chmod +x "$T/bin/omarchy"
+
+# $1 = exit code from the coarse Hyprland check, $2 = what the lock service says
+stub_lock() {
+  printf '#!/usr/bin/env bash\nexit %s\n' "$1" >"$T/bin/omarchy-hyprland-session-locked"
+  printf '#!/usr/bin/env bash\necho %q\n' "$2" >"$T/bin/omarchy-shell"
+  chmod +x "$T/bin/omarchy-hyprland-session-locked" "$T/bin/omarchy-shell"
+}
+
+run() { PATH="$T/bin:$PATH" HOME="$T/home" "$deploy" "$@" 2>&1; }
+
+fail=0
+check() { # name, want_rc, got_rc, output, substring the output must carry
+  if [[ $2 == "$3" && ( -z $5 || $4 == *"$5"* ) ]]; then
+    printf '  \033[32m✓\033[0m %s\n' "$1"
+  else
+    printf '  \033[31m✗\033[0m %s — wanted rc=%s%s, got rc=%s\n%s\n' \
+      "$1" "$2" "${5:+ carrying \"$5\"}" "$3" "$(sed 's/^/      /' <<<"$4")"
+    fail=1
+  fi
+}
+deployed_nothing() {
+  [[ $1 == *"STUB omarchy plugin update"* ]] &&
+    { printf '  \033[31m✗\033[0m it deployed anyway\n'; fail=1; } ||
+    printf '  \033[32m✓\033[0m wrote nothing\n'
+}
+
+printf '\n\033[1ma live lock\033[0m\n'
+
+stub_lock 0 '{"secure":true,"requested":false}'
+out=$(run --yes); check "secure lock declines with 3" 3 "$?" "$out" "the session is locked"
+deployed_nothing "$out"
+
+# The shell sets `requested` the moment a lock is asked for, before it is
+# secure. That window is still a lock worth deferring for.
+stub_lock 0 '{"secure":false,"requested":true}'
+out=$(run --yes); check "a requested lock also declines" 3 "$?" "$out" "the session is locked"
+
+printf '\n\033[1mno lock\033[0m\n'
+
+stub_lock 1 '{"secure":false,"requested":false}'
+out=$(run --yes); check "hands off to omarchy plugin update" 0 "$?" "$out" \
+  "STUB omarchy plugin update brownfamilysports.td-palette --yes"
+
+# Hyprland stops at the first solitary blocker, so a monitor with no workspace
+# yet reports 2 without ever being asked about the lock. That is not a lock.
+stub_lock 2 '{"secure":false,"requested":false}'
+out=$(run --yes); check "undetermined reads as unlocked" 0 "$?" "$out" "STUB omarchy plugin update"
+
+printf '\n\033[1ma stranded lock — the trap this must not spring\033[0m\n'
+
+# LOCK is still set in solitaryBlockedBy because it never clears, but the lock
+# client died with the shell, so nothing answers. Refusing here would leave the
+# box undeployable until reboot, which is the omarchy-restart-shell complaint.
+stub_lock 0 ''
+out=$(run --yes); check "a dead lock service does not wedge the deploy" 0 "$?" "$out" \
+  "STUB omarchy plugin update"
+
+printf '\n\033[1mrefusals\033[0m\n'
+
+stub_lock 1 '{}'
+rm -rf "$T/home/.config/omarchy/plugins/brownfamilysports.td-palette"
+out=$(run --yes); check "not installed" 1 "$?" "$out" "is not installed"
+mkdir -p "$T/home/.config/omarchy/plugins/brownfamilysports.td-palette"
+
+# A real omarchy-hyprland-session-locked lives in /usr/bin on an Omarchy box, so
+# the only honest way to ask what happens without one is a PATH holding nothing
+# but the externals deploy actually reaches for.
+mkdir -p "$T/isolated"
+for t in bash dirname jq; do ln -sf "$(command -v "$t")" "$T/isolated/$t"; done
+cp "$T/bin/omarchy" "$T/isolated/omarchy"
+out=$(PATH="$T/isolated" HOME="$T/home" "$deploy" --yes 2>&1)
+check "a missing lock check refuses rather than sailing through" 1 "$?" "$out" \
+  "need omarchy-hyprland-session-locked"
+deployed_nothing "$out"
+
+printf '\n'
+if [[ $fail -eq 0 ]]; then
+  printf '\033[32mthe guard falls the right way in every case\033[0m\n'
+else
+  printf '\033[31mfailures above\033[0m\n'
+  exit 1
+fi
