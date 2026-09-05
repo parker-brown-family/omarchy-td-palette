@@ -2,7 +2,7 @@
 
 **Give every terminal on the workspace its own Omarchy theme — and its own tube.**
 
-![Terminal Paint over three terminal tiles](docs/overlay.png)
+![The painter in action — every terminal tile grows its own theme grid](docs/painter.png)
 
 Click the palette in the bar and each terminal tile grows a picker card holding
 every theme installed on the box — Osaka Jade, Vantablack, Tokyo Night,
