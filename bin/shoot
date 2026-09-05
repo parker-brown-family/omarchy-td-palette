@@ -90,7 +90,18 @@ place "$A_NVIM" "BEGIN{$U printf \"%d %d %d %d\", ux, uy, uw*0.60, uh*0.62}"
 # btop needs 80 columns; the right column on a laptop-sized monitor does not
 # hold 80 at the default font, so this pane runs smaller — which is also how
 # dense the reference shot reads.
-setsid foot -o "main.font=monospace:size=8" sh -c 'btop || top' >/dev/null 2>&1 &
+# btop, minus its process table. The table lists every command on the box —
+# private project names included — and it is the one live element in an
+# otherwise staged scene: two hero images had to be pixel-blurred after the
+# fact because of it. Stage a config that shows cpu/mem/net/disks only,
+# keeping the user's own btop theme by copying their config first.
+BTOPDIR="${XDG_RUNTIME_DIR:-/tmp}/td-shoot-btop/btop"
+mkdir -p "$BTOPDIR"
+cp "${XDG_CONFIG_HOME:-$HOME/.config}/btop/btop.conf" "$BTOPDIR/btop.conf" 2>/dev/null || touch "$BTOPDIR/btop.conf"
+sed -i '/^shown_boxes/d' "$BTOPDIR/btop.conf"
+printf 'shown_boxes = "cpu mem net"\n' >>"$BTOPDIR/btop.conf"
+setsid foot -o "main.font=monospace:size=8" \
+  sh -c "XDG_CONFIG_HOME='$(dirname "$BTOPDIR")' btop || top" >/dev/null 2>&1 &
 wait_for 2; sleep 0.6; A_BTOP="$(newest)"
 place "$A_BTOP" "BEGIN{$U printf \"%d %d %d %d\", ux+uw*0.60+g, uy, uw*0.40-g, uh*0.47}"
 
@@ -119,6 +130,5 @@ staged: workspace $WS on $LAND — nvim on the widget | btop | Files | listing,
   (or left-click the palette on the bar). Paint a couple of tiles different
   themes first — the shot should show the paint, not just the picker.
 
-  check btop's process table before publishing — it lists real commands.
   tear it down afterwards:  bin/shoot --teardown
 EOF
