@@ -2,7 +2,7 @@
 
 **Give every terminal on the workspace its own Omarchy theme — and its own tube.**
 
-![Terminal Paint over three terminal tiles](docs/overlay.png)
+![The painter in action — every terminal tile grows its own theme grid](docs/painter.png)
 
 Click the palette in the bar and each terminal tile grows a picker card holding
 every theme installed on the box — Osaka Jade, Vantablack, Tokyo Night,
@@ -14,48 +14,33 @@ accent and foreground, and labelled in the colour that theme writes text in. If
 the name is hard to read on the card, the terminal will be hard to read too, and
 you have learned that before clicking rather than after.
 
-A rail across the top acts on every tile at once — **SATURATE ALL**, **CRT ALL**,
+A rail across the top acts on every tile at once — **SATURATE ALL** and
 **RESET DEFAULTS**, one per line with its chord beside it — and tells you how
 many themes this machine has and which one the desktop is wearing. Each tile
-carries the same three across its own card.
+carries the same options across its own card.
 
 - **foot / Alacritty / kitty / Ghostty / WezTerm** — the card floats over the
   window; a pick runs `td-tint --window <address> --theme <name>`, which writes
   that theme's OSC palette down the terminal's own tty and puts the matching
   gradient on its window border. Runtime-only, dies with the window; the ↩
   DESKTOP card hands the tile back to the desktop theme.
-- **Terminal Delight** — its story is better than a window tint (per-pane,
-  persistent, CRT-identity-preserving), so its card is a single handoff that
+- **Terminal Delight** — its story is better than a window tint (per-pane
+  and persistent), so its card is a single handoff that
   raises TD's own in-app pane picker over its control socket and gets out of the
   way.
 
 Esc, or a click on the dimmed background, or a second click on the palette:
 brushes away everywhere.
 
-## The tube, per tile
+## Where the tube went
 
-![a terminal pane behind the barrel warp, with the glare hotspot top-left](docs/tube.png)
-
-Terminal Delight's desktop half draws every window as curved glass — a barrel
-warp and a glass glare, one tube per window. **CRT** turns that on or off for
-one tile; **CRT ALL** does the workspace.
-
-(The overlay screenshot above cannot show this: layer-shell surfaces are not
-warped, so a picture *of* the picker never contains the thing the switch turns
-on. This is a bare pane.)
-
-It works because of where the warp lives. `shaders/surface.frag` compiles its
-warp and glare only into the *rounded-window* variant, so a window's rounding
-radius is its CRT power switch. That is not a trick — it is the only live lever
-there is. A window shader is loaded with Hyprland's config, so swapping it
-means editing a file and reloading the compositor — not something a picker can
-do per tile, per click — and the *screen* shader can only be swapped at the
-cost of wedging `wlr-screencopy` for hours. Rounding is a
-per-window property the compositor already honours, live, per window, and it is
-exactly the one the shader keys off.
-
-On a box where that warp is not installed, the CRT switches are **absent** rather
-than present and inert. `td-tint --state` reports whether the shader is there.
+Earlier versions carried a CRT switch on every tile, driving the per-window
+warp shader through the window's rounding property. That warp could never be
+click-correct — it runs before the cursor is composited, so the picture and the
+pointer disagreed at every tile corner — and it has been superseded. The curved
+glass lives in its own plugin now, **omarchy-crt** (the Delight-O-Matic): the
+whole desktop, every window, any theme, click-correct, with the knobs on the
+bar. This widget paints.
 
 ## The list is this machine's, right now
 
@@ -78,7 +63,7 @@ Plugins are unsandboxed, so here is the whole footprint:
 - **Runs, on summon:** one command — `td-tint --state`, the oracle that reports
   the installed themes, the desktop's own theme, whether the warp is installed,
   and where the terminal tiles are. **Runs, on a card click or a switch:**
-  `td-tint --window …` (`--theme`, `--clear`, `--saturate`, `--crt`) or
+  `td-tint --window …` (`--theme`, `--clear`, `--saturate`) or
   `terminal-delight ctl paint …`. **Runs, on an empty workspace:** one transient
   `notify-send` saying so. Nothing resident, nothing polled.
 - **Every one of those is an argv array.** No `bash -c`, no shell string, no
@@ -114,17 +99,13 @@ gated on the collector draining rather than on a timer, and a document past
 
 ## Requirements
 
-- **`td-tint`** on `PATH`, current enough to report `themes`, `crt` and
-  `desktop_theme` from `td-tint --state` and to accept `--theme` and `--crt`
+- **`td-tint`** on `PATH`, current enough to report `themes` and
+  `desktop_theme` from `td-tint --state` and to accept `--theme`
   ([omarchy-terminal-delight-theme](https://github.com/parker-brown-family/omarchy-terminal-delight-theme)
   **v0.3.0 or later** → `./install-variants.sh` installs it).
-- **For the CRT switches:** the per-window warp, from that same repo's
-  `./install-curve.sh` — which reloads Hyprland for you, no relogin. Without
-  it the switches are simply not drawn.
 
-If a switch is missing or a card is the wrong colour, that repo's `./bin/doctor`
-says which of those requirements is not actually met on your box, and how to fix
-it. A hidden CRT switch and a broken one look identical from here.
+If a card is the wrong colour, that repo's `./bin/doctor` says which of those
+requirements is not actually met on your box, and how to fix it.
 - **For Terminal Delight windows:** a `terminal-delight` build with the control
   socket (`feat/td-paint-mode` or later). Terminals started from older builds
   can't be reached — reopen them.
@@ -151,14 +132,13 @@ Pick any free chord — `omarchy menu keybindings --print` lists what's taken.
 
 While the overlay is up it plays entirely from the keyboard:
 
-Three options, three digits, and **Ctrl widens the same digit** from the
+Two options, two digits, and **Ctrl widens the same digit** from the
 selected tile to the whole workspace:
 
 | Key | This tile | With Ctrl — every tile |
 |---|---|---|
 | **1** | SATURATE | SATURATE ALL |
-| **2** | CRT | CRT ALL |
-| **3** | back to the desktop theme | RESET DEFAULTS |
+| **2** | back to the desktop theme | RESET DEFAULTS |
 
 | Key | Means |
 |---|---|
@@ -214,7 +194,24 @@ and [#8647](https://github.com/omacom/omarchy/issues/8647), fixed by the open
 [#7572](https://github.com/omacom/omarchy/pull/7572), with the underlying defect
 at [quickshell#962](https://github.com/quickshell-mirror/quickshell/issues/962).
 It applies to every Omarchy plugin equally. Until #7572 lands, run
-`omarchy plugin add` and `omarchy plugin update` against an unlocked session.
+`omarchy plugin add` against an unlocked session, and update with `bin/deploy`,
+which checks for you.
+
+## Update
+
+```bash
+~/.config/omarchy/plugins/brownfamilysports.td-palette/bin/deploy --yes
+```
+
+Drop `--yes` to see the incoming diff and be asked. This is
+`omarchy plugin update brownfamilysports.td-palette` with the check above in
+front of it: `bin/deploy` asks whether the session lock is live and exits 3
+rather than writing into a locked session. Nothing else differs — it hands off
+to `omarchy plugin update`, which still shows the diff, still validates what it
+pulled, and still rolls the plugin back if that validation fails.
+
+Exit 3 is the one worth branching on. An unattended deploy can sleep on it and
+come back, rather than reading a locked screen as a failure.
 
 ## Remove
 
@@ -223,8 +220,11 @@ omarchy plugin remove brownfamilysports.td-palette --yes
 ```
 
 Runtime tints die with their windows; the plugin itself writes no state and
-leaves nothing behind. A tile whose CRT you switched off returns to the desktop's
-rounding the moment you clear it, or when its window closes.
+leaves nothing behind.
+
+Looking for the CRT? The curved glass moved to its own plugin — omarchy-crt,
+the Delight-O-Matic — where it covers the whole desktop, every window, on any
+theme, and stays click-correct. This widget paints.
 
 ## Verifying it
 

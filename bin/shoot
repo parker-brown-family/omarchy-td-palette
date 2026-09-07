@@ -1,107 +1,134 @@
 #!/usr/bin/env bash
-# Photograph the overlay for the README, on a workspace built for the purpose.
+# Stage the standard Omarchy screenshot scene on WS 7 and leave it up for a
+# human to raise the paint overlay over and photograph.
 #
-# The point of a screenshot of a painter is the PAINT, so this stages a
-# workspace it can control: three fresh terminals showing colour, each already
-# wearing a different Omarchy theme, then raises the overlay and captures it.
-# Shooting the live desktop instead would put whatever happens to be on screen
-# — someone's mail, someone's diff — into a public README.
+#   bin/shoot              stage workspace 7 and leave it standing
+#   bin/shoot --teardown   close what a previous run staged
 #
-#   bin/shoot                 stage, capture to docs/, tear down
-#   bin/shoot --keep          leave the staged workspace up
+# THE SCENE IS THE ONE EVERY OMARCHY THEME SHIPS: Neovim on the left, btop
+# top-right, the Files app bottom-right, a terminal with a directory listing
+# bottom-left. A theme screenshot is a genre, and a reader flipping through
+# themes compares like with like — so the overlay is photographed floating
+# over the same desk a reader has already seen twenty times, which is what
+# makes the paint cards read as the new thing in the picture. Three of the
+# four tiles are terminals, so three of them grow cards.
 #
-# It returns you to the workspace you started on, always.
+# The four windows are FLOATED and placed at the reference proportions rather
+# than left to the tiler: the first attempt trusted the layout engine and got
+# four columns so narrow that btop refused to run in one. Floating also means
+# the scene survives whatever layout the box actually uses. Placement is
+# resize-then-move, because resize re-centres a floating window.
+#
+# EVERYTHING VISIBLE IS STAGED. Neovim edits this widget's own source, the
+# listing is this repository, and Files opens a built Home of empty standard
+# folders. One caution is printed at the end: btop shows real process names,
+# so look at its table before you shoot.
 set -uo pipefail
 
-OUT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs}"
-[[ $OUT == --* ]] && OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs"
-KEEP=""
-for a in "$@"; do [[ $a == --keep ]] && KEEP=1; done
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WS=7
+HERO="$ROOT/BarWidget.qml"
+FAKEHOME="${XDG_RUNTIME_DIR:-/tmp}/td-shoot-home"
 
-WS=7                       # far from anything in daily use
-THEMES=(osaka-jade vantablack tokyo-night)
-HOME_WS="$(hyprctl activeworkspace -j | jq -r '.id')"
+need() { command -v "$1" >/dev/null || { echo "shoot: need $1" >&2; exit 1; }; }
+need hyprctl; need jq; need foot; need awk
 
-need() { command -v "$1" >/dev/null || { echo "need $1" >&2; exit 1; }; }
-need hyprctl; need grim; need jq; need foot
+HOME_WS="$(hyprctl activeworkspace -j | jq -r '.id' 2>/dev/null || echo 1)"
 
-cleanup() {
-  if [[ -z $KEEP ]]; then
-    while IFS= read -r a; do
-      [[ -n $a ]] || continue
-      hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1
-    done < <(hyprctl clients -j | jq -r --argjson w "$WS" '.[] | select(.workspace.id == $w) | .address')
-  fi
-  hyprctl dispatch "hl.dsp.focus({ workspace = $HOME_WS })" >/dev/null 2>&1
-}
-trap cleanup EXIT
-
-mkdir -p "$OUT"
-# Hyprland 0.56: `hl.dsp.workspace` is a table of workspace OPERATIONS
-# (move, rename, change_id) — going to one is a focus, not an operation.
-hyprctl dispatch "hl.dsp.focus({ workspace = $WS })" >/dev/null 2>&1
-sleep 0.4
-
-# Something with colour in it, and no content that is anyone's business. Each
-# pane prints the palette it is wearing, which is also the thing the shot is
-# meant to show.
-demo="$(mktemp)"
-cat >"$demo" <<'SH'
-printf '\n  \033[1mTerminal Delight\033[0m — one tube per window\n\n'
-for i in 1 2 3 4 5 6; do printf '  \033[4%dm    \033[0m' "$i"; done; printf '\n'
-for i in 1 2 3 4 5 6; do printf '  \033[3%dm████\033[0m' "$i"; done; printf '\n\n'
-printf '  \033[32m$\033[0m td-tint --theme osaka-jade\n'
-printf '  \033[32m$\033[0m td-tint --window 0x… --crt off\n'
-printf '  \033[32m$\033[0m td-tint --themes | wc -l\n  23\n\n'
-printf '  \033[36m#\033[0m the warp compiles into the rounded-window variant,\n'
-printf '  \033[36m#\033[0m so a window rounding radius IS its CRT switch.\n\n'
-for r in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  printf '  \033[90m%02d\033[0m  \033[34mfn\033[0m \033[33mpaint\033[0m(tile: \033[36m&Tile\033[0m) -> \033[35mResult\033[0m<()> {\n' "$r"
-done
-printf '\n'
-exec sleep 600
-SH
-
-for _ in 1 2 3; do
-  setsid foot --title "terminal-paint-shot" bash --rcfile "$demo" -i >/dev/null 2>&1 &
-  sleep 0.7
-done
-sleep 1.2
-
-# Give each tile a different theme, so the shot shows what the plugin is for
-# rather than three identical windows.
-i=0
-while IFS= read -r a; do
-  [[ -n $a ]] || continue
-  td-tint --window "$a" --theme "${THEMES[$((i % ${#THEMES[@]}))]}" >/dev/null 2>&1
-  i=$((i + 1))
-done < <(hyprctl clients -j | jq -r --argjson w "$WS" '.[] | select(.workspace.id == $w) | .address')
-sleep 0.6
-
-omarchy-shell brownfamilysports.td-palette open >/dev/null 2>&1
-sleep 1.6
-grim "$OUT/overlay.png"
-omarchy-shell brownfamilysports.td-palette close >/dev/null 2>&1
-sleep 0.5
-grim "$OUT/workspace.png"
-
-# Web sizes, because a 3840x2160 PNG is eight megabytes of README nobody can
-# see at once. The hero is halved; the marketplace preview is the rail plus one
-# whole tile, which is the part that explains what the plugin is for.
-if command -v magick >/dev/null || command -v convert >/dev/null; then
-  M="$(command -v magick || command -v convert)"
-  "$M" "$OUT/overlay.png"   -resize 1920x -strip "$OUT/overlay.png"
-  "$M" "$OUT/workspace.png" -resize 1920x -strip "$OUT/workspace.png"
-  "$M" "$OUT/overlay.png" -crop 1300x790+100+25 +repage -resize 1400x -strip \
-    "$(dirname "$OUT")/preview.png"
-  # The tube itself, which the overlay cannot show: layer-shell surfaces are
-  # not warped, so a shot OF the picker never contains the thing the CRT
-  # switch turns on. This crop is a bare pane — bowed lines, glare hotspot
-  # top-left — which is the only honest picture of it.
-  "$M" "$OUT/workspace.png" -crop 470x300+28+55 +repage -resize 1000x -strip \
-    "$OUT/tube.png"
-  echo "wrote $(dirname "$OUT")/preview.png and $OUT/tube.png"
+if [[ "${1:-}" == "--teardown" ]]; then
+  while IFS= read -r a; do
+    [[ -n $a ]] || continue
+    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1
+  done < <(hyprctl clients -j | jq -r --argjson w "$WS" '.[] | select(.workspace.id == $w) | .address')
+  echo "workspace $WS cleared"
+  exit 0
 fi
 
-rm -f "$demo"
-echo "wrote $OUT/overlay.png and $OUT/workspace.png"
+# The standard scene is landscape; stage it on the largest landscape monitor,
+# in that monitor's logical coordinates.
+MON="$(hyprctl monitors -j | jq -c 'map(select(.transform % 2 == 0)) | sort_by(-.width) | .[0]')"
+LAND="$(jq -r '.name' <<<"$MON")"
+read -r MX MY MW MH < <(jq -r '"\(.x) \(.y) \(.width/.scale) \(.height/.scale)"' <<<"$MON")
+[[ -n "$LAND" ]] || { echo "shoot: no landscape monitor found" >&2; exit 1; }
+
+hyprctl dispatch "hl.dsp.focus({ monitor = \"$LAND\" })" >/dev/null 2>&1
+hyprctl dispatch "hl.dsp.focus({ workspace = $WS })" >/dev/null 2>&1
+sleep 0.5
+
+mkdir -p "$FAKEHOME"/{Desktop,Documents,Downloads,Music,Pictures,Public}
+
+count() { hyprctl clients -j | jq --argjson w "$WS" '[.[] | select(.workspace.id == $w)] | length'; }
+wait_for() { for _ in $(seq 1 40); do [[ "$(count)" -ge "$1" ]] && return 0; sleep 0.25; done; }
+newest() {
+  hyprctl clients -j | jq -r --argjson w "$WS" \
+    '[.[] | select(.workspace.id == $w)] | sort_by(.focusHistoryID) | .[0].address'
+}
+
+# Reference proportions, in the monitor's usable area (under the bar, inside
+# the gaps): the editor takes the left 60% and the top 62% of it; the listing
+# sits under the editor; btop and Files split the right column 47/53.
+G=12; TOP=38
+geom() { awk -v mx="$MX" -v my="$MY" -v mw="$MW" -v mh="$MH" -v g="$G" -v top="$TOP" "$1"; }
+place() { # addr "awk-expr printing: x y w h"
+  local addr="$1"; shift
+  read -r X Y W H < <(geom "$1")
+  hyprctl dispatch "hl.dsp.window.float({ action = \"on\", window = \"address:$addr\" })" >/dev/null 2>&1
+  hyprctl dispatch "hl.dsp.window.resize({ x = $W, y = $H, window = \"address:$addr\" })" >/dev/null 2>&1
+  hyprctl dispatch "hl.dsp.window.move({ x = $X, y = $Y, window = \"address:$addr\" })" >/dev/null 2>&1
+}
+# usable area
+U='ux=mx+g; uy=my+top; uw=mw-2*g; uh=mh-top-g;'
+
+if command -v nvim >/dev/null; then
+  setsid foot -D "$ROOT" nvim "$HERO" >/dev/null 2>&1 &
+else
+  setsid foot -D "$ROOT" sh -c "less '$HERO'" >/dev/null 2>&1 &
+fi
+wait_for 1; sleep 0.6; A_NVIM="$(newest)"
+place "$A_NVIM" "BEGIN{$U printf \"%d %d %d %d\", ux, uy, uw*0.60, uh*0.62}"
+
+# btop needs 80 columns; the right column on a laptop-sized monitor does not
+# hold 80 at the default font, so this pane runs smaller — which is also how
+# dense the reference shot reads.
+# btop, minus its process table. The table lists every command on the box —
+# private project names included — and it is the one live element in an
+# otherwise staged scene: two hero images had to be pixel-blurred after the
+# fact because of it. Stage a config that shows cpu/mem/net/disks only,
+# keeping the user's own btop theme by copying their config first.
+BTOPDIR="${XDG_RUNTIME_DIR:-/tmp}/td-shoot-btop/btop"
+mkdir -p "$BTOPDIR"
+cp "${XDG_CONFIG_HOME:-$HOME/.config}/btop/btop.conf" "$BTOPDIR/btop.conf" 2>/dev/null || touch "$BTOPDIR/btop.conf"
+sed -i '/^shown_boxes/d' "$BTOPDIR/btop.conf"
+printf 'shown_boxes = "cpu mem net"\n' >>"$BTOPDIR/btop.conf"
+setsid foot -o "main.font=monospace:size=8" \
+  sh -c "XDG_CONFIG_HOME='$(dirname "$BTOPDIR")' btop || top" >/dev/null 2>&1 &
+wait_for 2; sleep 0.6; A_BTOP="$(newest)"
+place "$A_BTOP" "BEGIN{$U printf \"%d %d %d %d\", ux+uw*0.60+g, uy, uw*0.40-g, uh*0.47}"
+
+if command -v nautilus >/dev/null; then
+  setsid nautilus --new-window "$FAKEHOME" >/dev/null 2>&1 &
+else
+  setsid foot -D "$FAKEHOME" sh -c 'ls -la; exec sleep 1800' >/dev/null 2>&1 &
+fi
+wait_for 3; sleep 1.0; A_FILES="$(newest)"
+place "$A_FILES" "BEGIN{$U printf \"%d %d %d %d\", ux+uw*0.60+g, uy+uh*0.47+g, uw*0.40-g, uh*0.53-g}"
+
+LS="ls -la"; command -v eza >/dev/null && LS="eza -la --icons --git"
+setsid foot -D "$ROOT" sh -c \
+  "printf '\\033[32m\$\\033[0m $LS\\n'; $LS; exec sleep 1800" >/dev/null 2>&1 &
+wait_for 4; sleep 0.6; A_LS="$(newest)"
+place "$A_LS" "BEGIN{$U printf \"%d %d %d %d\", ux, uy+uh*0.62+g, uw*0.60, uh*0.38-g}"
+
+hyprctl dispatch "hl.dsp.focus({ workspace = $HOME_WS })" >/dev/null 2>&1
+
+cat <<EOF
+staged: workspace $WS on $LAND — nvim on the widget | btop | Files | listing,
+        placed at the standard proportions.
+
+  raise the overlay once you are ON workspace $WS:
+      omarchy-shell brownfamilysports.td-palette open
+  (or left-click the palette on the bar). Paint a couple of tiles different
+  themes first — the shot should show the paint, not just the picker.
+
+  tear it down afterwards:  bin/shoot --teardown
+EOF

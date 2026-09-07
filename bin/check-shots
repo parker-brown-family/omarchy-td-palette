@@ -28,8 +28,6 @@ cd "$root" || exit 1
 
 # image  ->  the sources whose changes should be visible in it
 declare -A RENDERS=(
-  ["docs/overlay.png"]="BarWidget.qml"
-  ["docs/workspace.png"]="BarWidget.qml"
   ["preview.png"]="BarWidget.qml"
 )
 

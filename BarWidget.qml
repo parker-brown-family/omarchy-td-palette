@@ -35,11 +35,11 @@ import qs.Ui
 // ago is on the card grid, and one uninstalled a minute ago is not. F5 re-reads
 // without closing, for when the install happened in the window behind this one.
 //
-// Each tile also has a TUBE: the barrel warp and glass glare that
-// `shaders/surface.frag` draws for any window with a rounding radius. That
-// makes rounding the switch, and it is the only live one — Hyprland reads
-// window shaders once at startup. So CRT is per tile, and CRT ALL is the
-// workspace, exactly as SATURATE is.
+// There used to be a CRT switch on every tile, driving the per-window warp in
+// `shaders/surface.frag` through the window's rounding property. That shader
+// is superseded — it runs before the cursor is composited, so its picture and
+// its clicks could never agree — and the whole-desktop glass lives in the
+// omarchy-crt plugin now, per surface and click-correct. This widget paints.
 //
 // The practical dividend: every lowercase letter belongs to a theme NAME. A
 // verb bound to one steals it — `o` was the source switch and `osaka-jade`
@@ -85,11 +85,6 @@ BarWidget {
   // that matches is marked, so the grid says what you are deviating FROM
   // rather than making you remember it.
   property string desktopTheme: ""
-
-  // Whether the per-window warp is installed at all. A CRT switch on a box
-  // without `shaders/surface.frag` would be a control that does nothing, so
-  // the overlay says why instead of drawing one.
-  property bool crtAvailable: false
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -137,18 +132,12 @@ BarWidget {
     tileModel.setProperty(i, "picked", key)
     tileModel.setProperty(i, "src", src === undefined ? "omarchy" : src)
   }
-  // SATURATE and CRT are the same shape of thing: a per-tile boolean the
-  // engine owns, flipped by one td-tint verb that takes on|off|toggle. So they
-  // are ONE set of functions with the switch as an argument rather than two
-  // sets that have to be kept in step by hand — the pair had already drifted
-  // once, when --clear learned to hand the tube back and only SATURATE's model
-  // was told.
-  //
-  //   kind === "crt"  ->  --crt,       tile.crt,  root.allCrt
-  //   otherwise       ->  --saturate,  tile.sat,  root.allSat
+  // One per-tile boolean the engine owns, flipped by a td-tint verb that
+  // takes on|off|toggle. The map once carried a second switch (CRT — retired
+  // to the omarchy-crt plugin), and the kind-keyed shape stays because it is
+  // what kept the pair honest while both existed.
   readonly property var switches: ({
-    sat: { flag: "--saturate", field: "sat" },
-    crt: { flag: "--crt", field: "crt" }
+    sat: { flag: "--saturate", field: "sat" }
   })
 
   function mark(i, kind, on) {
@@ -157,7 +146,6 @@ BarWidget {
   }
 
   property bool allSat: false
-  property bool allCrt: false
 
   // Every paintable tile, or none of them: the rail's toggle says ON only when
   // there is nothing left to switch on. ListModel edits do not re-run
@@ -173,8 +161,7 @@ BarWidget {
     return any && all
   }
   function refreshAll(kind) {
-    if (kind === "crt") root.allCrt = root.everyTile("crt")
-    else root.allSat = root.everyTile("sat")
+    root.allSat = root.everyTile("sat")
   }
 
   // One switch, everywhere: label + a chunky track that SAYS which state it
@@ -359,7 +346,6 @@ BarWidget {
     Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
     root.markPicked(root.sel, "-", "")
     root.mark(root.sel, "sat", false)
-    root.mark(root.sel, "crt", root.crtAvailable)
   }
   function tdSel() {
     var t = tileModel.get(root.sel)
@@ -372,7 +358,6 @@ BarWidget {
   function switchTile(i, kind, on) {
     var t = tileModel.get(i)
     if (!t || t.td) return
-    if (kind === "crt" && !root.crtAvailable) return
     Quickshell.execDetached(["td-tint", "--window", t.address,
                              root.switches[kind].flag, on ? "on" : "off"])
     root.mark(i, kind, on)
@@ -388,7 +373,7 @@ BarWidget {
   // The global toggle mirrors the switch it drives: everything on -> turn it
   // all off, anything off -> turn it all on.
   function switchAllToggle(kind) {
-    root.switchAll(kind, !(kind === "crt" ? root.allCrt : root.allSat))
+    root.switchAll(kind, !root.allSat)
   }
 
   function resetAll() {
@@ -398,9 +383,6 @@ BarWidget {
       Quickshell.execDetached(["td-tint", "--window", t.address, "--clear"])
       root.markPicked(i, "-", "")
       root.mark(i, "sat", false)
-      // --clear hands the tube back too, so the model has to say so or the
-      // rail's CRT ALL keeps claiming a state the tiles no longer hold.
-      root.mark(i, "crt", root.crtAvailable)
     }
   }
 
@@ -539,8 +521,7 @@ BarWidget {
     }
     if (!st || !st.tiles || !st.monitor) return
     console.log("td-paint: state — " + st.tiles.length + " tile(s), "
-                + (st.themes ? st.themes.length : 0) + " themes, crt="
-                + (st.crt && st.crt.available ? "available" : "unavailable"))
+                + (st.themes ? st.themes.length : 0) + " themes")
 
     // where the keyboard opens: on the tile you were just working in
     var focusAddr = st.focused || ""
@@ -563,7 +544,6 @@ BarWidget {
         th: t.size[1],
         picked: t.variant || "",
         src: t.source === "omarchy" ? "omarchy" : "",
-        crt: t.crt === true,
         sat: t.saturated === true
       })
     })
@@ -576,9 +556,7 @@ BarWidget {
       if (tiles[t].address === focusAddr) root.sel = t
     }
     root.refreshAll("sat")
-    root.refreshAll("crt")
     root.cards = root.sanitizeCards(st.themes, "theme")
-    root.crtAvailable = !!(st.crt && st.crt.available === true)
     // The desktop's theme is a key from the same list, so it gets the same
     // regex — a name that could not be a card cannot be a marker either.
     root.desktopTheme = (typeof st.desktop_theme === "string"
@@ -687,24 +665,18 @@ BarWidget {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
           root.tdSel(); event.accepted = true; return
         }
-        // THREE OPTIONS, THREE DIGITS, and Ctrl widens the same digit from
+        // TWO OPTIONS, TWO DIGITS, and Ctrl widens the same digit from
         // this tile to the whole workspace. Digits and not letters because
         // every lowercase letter belongs to a theme NAME — `s` was stealing
-        // `solitude`, `d` was one `dracula` away — and not shifted letters
-        // either, which is where they went first: S/C/R are three unrelated
-        // words to remember, where 1/2/3 is one row of keys and Ctrl is the
-        // scope. A theme whose name begins with a digit was never reachable
-        // from the keyboard anyway; the name matcher only ever looked at a-z.
+        // `solitude`, `d` was one `dracula` away. (There were three digits
+        // while CRT was per tile; that switch retired to the omarchy-crt
+        // plugin and DESKTOP moved up a key rather than leaving a gap.)
         var scoped = (event.modifiers & Qt.ControlModifier) !== 0
         if (event.key === Qt.Key_1) {
           if (scoped) root.switchAllToggle("sat"); else root.switchSel("sat")
           event.accepted = true; return
         }
         if (event.key === Qt.Key_2) {
-          if (scoped) root.switchAllToggle("crt"); else root.switchSel("crt")
-          event.accepted = true; return
-        }
-        if (event.key === Qt.Key_3) {
           if (scoped) root.resetAll(); else root.clearSel()
           event.accepted = true; return
         }
@@ -731,7 +703,6 @@ BarWidget {
         property string pickedNow: model.picked
         property string pickedSrc: model.src
         property bool satNow: model.sat
-        property bool crtNow: model.crt
         readonly property bool onDesktop: pickedNow === "" || pickedNow === "-"
         readonly property bool tileSel: index === root.sel
         x: model.tx
@@ -1047,13 +1018,9 @@ BarWidget {
 
             // SATURATE — crank this tile's text to the Terminal Delight look.
             // One switch that shows its state; td-tint's record carries the
-            // truth and --sync re-applies it.
-            // What a tile can be beyond its colour: how hard the text burns,
-            // whether it sits behind curved glass, and the way back. Across,
-            // because a tile card is wide and short — the rail runs the same
-            // three down a column for the opposite reason. The CRT option is
-            // absent on a box without the per-window warp rather than present
-            // and inert.
+            // truth and --sync re-applies it. Across, because a tile card is
+            // wide and short — the rail runs the same options down a column
+            // for the opposite reason.
             Row {
               visible: !model.td
               anchors.horizontalCenter: parent.horizontalCenter
@@ -1066,15 +1033,8 @@ BarWidget {
               }
 
               OptionRow {
-                visible: root.crtAvailable
                 anchors.verticalCenter: parent.verticalCenter
-                keys: "2"; label: "CRT"; on: crtNow
-                onFired: root.switchTile(tileIndex, "crt", !crtNow)
-              }
-
-              OptionRow {
-                anchors.verticalCenter: parent.verticalCenter
-                keys: "3"; label: "DESKTOP"; toggle: false
+                keys: "2"; label: "DESKTOP"; toggle: false
                 onFired: { root.sel = tileIndex; root.clearSel() }
               }
             }
@@ -1154,13 +1114,7 @@ BarWidget {
           }
 
           OptionRow {
-            visible: root.crtAvailable
-            keys: "CTRL 2"; label: "CRT ALL"; on: root.allCrt
-            onFired: root.switchAllToggle("crt")
-          }
-
-          OptionRow {
-            keys: "CTRL 3"; label: "RESET DEFAULTS"; toggle: false
+            keys: "CTRL 2"; label: "RESET DEFAULTS"; toggle: false
             onFired: root.resetAll()
           }
         }
