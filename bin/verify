@@ -178,6 +178,32 @@ else
   skip "qmllint needs OMARCHY_PATH and the shell — run this on an Omarchy box"
 fi
 
+# THE ONE VALUE THAT COMES FROM OFF THIS MACHINE HAS TO LOOK LIKE A COMMIT.
+#
+# `check-listing` reads the listed commit out of the marketplace's registry.json
+# and hands it to git. It used to hand over whatever was there, so a value
+# starting with a dash would have reached `git merge-base` as an option rather
+# than as a commit. A marketplace scan named this `remote-git-execution-unpinned`
+# and asked for a full forty-character SHA before anything fetches or builds
+# (omacom/omarchy-plugin-marketplace#5385, 2026-09-10). Asserted here rather
+# than trusted, because the guard is two lines and two lines are what quietly
+# go missing.
+if grep -q 'is_sha "$listed" ||' "$root/bin/check-listing" &&
+   grep -q 'is_sha "$tag_sha" ||' "$root/bin/check-listing"; then
+  ok "check-listing holds the registry's commit to 40 hex before git sees it"
+else
+  err "check-listing no longer validates the SHA it takes from the registry"
+fi
+# An invocation, not the word: the script legitimately tells you to run
+# `git fetch --tags` yourself, and a check that fires on its own advice is a
+# check somebody switches off.
+if grep -qE '(^[[:space:]]*|[;&|][[:space:]]*)git[[:space:]]+(fetch|pull|clone)\b' \
+   "$root/bin/check-listing"; then
+  err "check-listing fetches from a remote again — a moving tag is unreviewed content"
+else
+  ok "check-listing fetches no git refs; it compares objects already in the clone"
+fi
+
 if have omarchy; then
   if omarchy plugin validate "$root" >/dev/null 2>&1; then
     ok "omarchy plugin validate"

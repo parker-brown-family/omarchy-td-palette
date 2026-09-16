@@ -249,7 +249,16 @@ preview, its description, its version — until somebody asks for a new one, and
 nothing tells you it has gone stale. This compares the listed commit against the
 latest release tag. Lagging behind unreleased commits on main is fine; lagging
 behind a *release* means the page everyone browses is not the plugin you
-shipped. Run it when you cut a release. Needs network, so it is not a CI gate.
+shipped. Run it when you cut a release. Needs network for the registry read, so
+it is not a CI gate.
+
+It reads that registry and fetches no git refs: everything it compares is an
+object already in your clone, so `git fetch --tags` is yours to run, and a tag
+that moved on a remote after somebody reviewed it never arrives here. The one
+value that does come from off the machine — the listed commit, out of the
+marketplace's `registry.json` — is held to a full forty-character hex SHA before
+it is allowed near a git command, because a value starting with a dash would
+otherwise have reached `git merge-base` as an option rather than as a commit.
 
 ```bash
 ./bin/keys-e2e

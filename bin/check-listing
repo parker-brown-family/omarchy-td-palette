@@ -18,11 +18,29 @@
 # Lagging behind unreleased commits on main is fine and expected — a listing is
 # not supposed to track every push. Lagging behind a release is the bug.
 #
-# Needs network. Not a CI gate for that reason, and because a listing legitimately
-# takes a day or two to catch up after a release; run it when you cut one.
+# Needs network for the registry read. Not a CI gate for that reason, and because
+# a listing legitimately takes a day or two to catch up after a release; run it
+# when you cut one.
+#
+# IT READS THE REGISTRY; IT DOES NOT FETCH GIT. Everything compared below is an
+# object already in your clone, and the one value that arrives from off this
+# machine — the listed commit, out of the marketplace's registry.json — is held
+# to a full forty-character hex SHA before it is allowed near a git command. It
+# used to go straight into `git merge-base`, `git rev-list` and `git show` as an
+# argument, where a value starting with a dash would have been read as a git
+# option rather than as a commit. Small surface; it was a real one.
+#
+# There is no `git fetch` here any more either. A tag or a branch fetched from a
+# remote can move after anyone looked at it, so what comes back is content
+# nobody reviewed, and a listing checker has no business pulling any: the tag
+# you just cut is already local, which is the whole case this runs in. Run
+# `git fetch --tags` yourself first if your tags are stale.
 set -uo pipefail
 
-REGISTRY_REPO="HANCORE-linux/omarchy-plugin-marketplace"
+REGISTRY_REPO="omacom/omarchy-plugin-marketplace"
+
+# A commit is forty hex characters. Whatever else arrives, it is not one.
+is_sha() { [[ $1 =~ ^[0-9a-f]{40}$ ]]; }
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root" || exit 1
 
@@ -48,11 +66,24 @@ if [[ -z $listed ]]; then
   printf '  \033[90m–\033[0m not listed on the marketplace yet — nothing to compare\n'
   exit 0
 fi
+is_sha "$listed" || {
+  echo "the registry gave '$listed' where a 40-character commit belongs — refusing to use it" >&2
+  exit 1
+}
 
-git fetch -q --tags origin 2>/dev/null || true
 tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
 [[ -n $tag ]] || { printf '  \033[90m–\033[0m no release tag yet\n'; exit 0; }
 tag_sha="$(git rev-list -n1 "$tag" 2>/dev/null)"
+is_sha "$tag_sha" || { echo "could not resolve $tag to a commit" >&2; exit 1; }
+
+# The listed commit is nearly always already here — it is a commit out of this
+# repository's own history. When it is not, say so rather than reporting a
+# comparison made against an object nobody has.
+if ! git cat-file -e "$listed^{commit}" 2>/dev/null; then
+  printf '  \033[90m–\033[0m listed commit %s is not in this clone — `git fetch --tags` and rerun\n' \
+    "${listed:0:12}"
+  exit 0
+fi
 
 printf '  listed snapshot   %s\n' "${listed:0:12}"
 printf '  latest release    %s (%s)\n' "${tag_sha:0:12}" "$tag"
