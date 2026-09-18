@@ -215,6 +215,34 @@ else
   skip "omarchy not on PATH — the real validator did not run"
 fi
 
+# EVERY ACTION A WORKFLOW RUNS IS SOMEBODY ELSE'S CODE HOLDING THIS
+# REPOSITORY'S TOKEN, and a tag is a pointer its owner can move. `@v5` therefore
+# means "whatever that repository is on the day CI happens to run", which is not
+# a thing anybody reviewed. A workflow that declares no `permissions:` takes the
+# default token, which is more than this one needs. Both were true here, and in
+# the two sibling plugins, until a supply-chain review said so
+# (omacom/omarchy-plugin-marketplace#5534, 2026-09-17) — so it is a check now
+# rather than a habit.
+wf_bad=""
+for wf in "$root"/.github/workflows/*.yml "$root"/.github/workflows/*.yaml; do
+  [[ -e $wf ]] || continue
+  while IFS= read -r u; do
+    [[ $u == ./* ]] && continue          # a local action is this repo's own code
+    ref="${u##*@}"
+    [[ $ref =~ ^[0-9a-f]{40}$ ]] \
+      || wf_bad+="${wf##*/}: uses ${u} — a movable ref, not a commit"$'\n'
+  done < <(grep -oE '^[^#]*uses:[[:space:]]*[^[:space:]]+' "$wf" \
+           | sed -E 's/^.*uses:[[:space:]]*//')
+  grep -qE '^permissions:' "$wf" \
+    || wf_bad+="${wf##*/}: declares no permissions, so it takes the default token"$'\n'
+done
+if [[ -n $wf_bad ]]; then
+  err "a workflow runs unreviewed code, or holds more token than it needs"
+  printf '%s' "$wf_bad" | sed 's/^/    /'
+else
+  ok "every workflow action is pinned to a commit, and every workflow says what it may touch"
+fi
+
 printf '\n%s\n' "$(printf '─%.0s' {1..62})"
 if [[ $errors -gt 0 ]]; then
   printf '\033[31m%d error(s), %d warning(s) — not shippable\033[0m\n' "$errors" "$warns"; exit 1

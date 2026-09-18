@@ -3,11 +3,23 @@ on:
   push:
   pull_request:
 
+# The token this workflow is handed is the token anything it runs could use.
+# Nothing here writes: it clones, installs its tools and runs the gate. Saying
+# so explicitly is what stops a step added later — or a dependency of one — from
+# inheriting write access to this repository by default.
+permissions:
+  contents: read
+
 jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      # PINNED TO A COMMIT, NOT A TAG. A tag is a pointer its owner can move, so
+      # `@v5` means "whatever actions/checkout is on the day CI runs" — code
+      # nobody reviewed, executing with this workflow's token. The trailing
+      # comment names the release that SHA was, so an upgrade stays a legible
+      # one-line change rather than an opaque one.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         # Full history: bin/check-shots compares the commit that last
         # touched an image against the one that last touched the code it
         # is a picture of, and a shallow clone has neither.
