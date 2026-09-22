@@ -178,6 +178,48 @@ else
   skip "qmllint needs OMARCHY_PATH and the shell — run this on an Omarchy box"
 fi
 
+# WHAT THE SNAPSHOT MAY COST THE SHELL IT LIVES IN. The bar widget is not a
+# process of its own — it runs inside the long-lived omarchy-shell — so an
+# oracle that never stops writing, or never stops, spends the shell's memory
+# rather than its own. A marketplace security review named both halves
+# (omacom/omarchy-plugin-marketplace#5385, 2026-09-22): the collector fully
+# buffered the producer, and the watchdog neither capped producer bytes nor
+# terminated a stalled process.
+#
+# Two checks, because the fix has two halves and they fail differently. The
+# static one says the widget still uses the constructs; the behavioural one says
+# the Quickshell behaviour those constructs depend on is still true. Either can
+# rot without the other noticing.
+snap_bad=""
+grep -q 'waitForEnd: false' "$root/BarWidget.qml" \
+  || snap_bad+="the snapshot collector no longer reports while filling, so the ceiling cannot bind the producer"$'\n'
+grep -q 'onDataChanged:' "$root/BarWidget.qml" \
+  || snap_bad+="nothing watches the buffer as it fills"$'\n'
+grep -qE 'snapshot\.signal\(' "$root/BarWidget.qml" \
+  || snap_bad+="nothing ends the producer — a stalled one would be left writing"$'\n'
+grep -qE 'snapWatchdog\.restart\(\)' "$root/BarWidget.qml" \
+  || snap_bad+="no deadline is armed for the run"$'\n'
+if [[ -n $snap_bad ]]; then
+  err "the snapshot can outspend the shell again"
+  printf '%s' "$snap_bad" | sed 's/^/    /'
+else
+  ok "the snapshot is capped while it fills, and its producer can be ended"
+fi
+
+# The behavioural half needs a real Quickshell. A bare runner has none, and a
+# check that silently does nothing is worse than none: the tick says it passed.
+if have quickshell; then
+  if snapout="$(timeout 30 quickshell -p "$root/tests/check_snapshot_limits.qml" 2>&1 \
+                | sed 's/\x1b\[[0-9;]*m//g; s/^ *DEBUG qml: //')"; then
+    printf '%s\n' "$snapout" | grep -E '^\s+(ok|FAIL)' | sed 's/^ */  /'
+  else
+    printf '%s\n' "$snapout" | grep -E '^\s+(ok|FAIL)' | sed 's/^ */  /'
+    err "a runaway or stalled oracle can still exhaust the shell"
+  fi
+else
+  skip "quickshell not on PATH — the snapshot ceiling went unexercised"
+fi
+
 # THE ONE VALUE THAT COMES FROM OFF THIS MACHINE HAS TO LOOK LIKE A COMMIT.
 #
 # `check-listing` reads the listed commit out of the marketplace's registry.json

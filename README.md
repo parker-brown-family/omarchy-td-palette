@@ -94,8 +94,19 @@ boundary before anything downstream sees it:
 A record that does not fit is dropped, not repaired. Card labels are built from
 plain `Text` items with font properties — the draw path never assembles markup,
 so there is nothing for a hostile name to be rendered as. The snapshot read is
-gated on the collector draining rather than on a timer, and a document past
-256 KiB is discarded unparsed.
+gated on the collector draining rather than on a timer.
+
+**The oracle is not trusted to be small, or to finish.** This widget is not a
+process of its own — it runs inside the long-lived `omarchy-shell` — so an
+oracle that never stops writing spends the shell's memory rather than its own.
+The 256 KiB ceiling is therefore applied to the producer while it is still
+writing, not only to the finished document: the collector reports its length as
+it fills, and crossing the ceiling ends the process. A run that produces nothing
+at all is on a five-second deadline against a command that normally answers in
+about 270 ms, and that deadline sends `SIGTERM` and then `SIGKILL` rather than
+reading around a process it has given up on. `tests/check_snapshot_limits.qml`
+exercises both against a real runaway; `bin/verify` runs it where Quickshell is
+present and says so where it is not.
 
 ## Requirements
 

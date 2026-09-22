@@ -100,13 +100,32 @@ BarWidget {
     root.snapRun++
     snapshot.running = false
     snapshot.running = true
+    // ARMED AT SUMMON, NOT AT EXIT. A producer that never exits and never
+    // closes its stream used to arm nothing at all: the only timer was started
+    // by `onExited`, so the one case that needed a deadline — a process that
+    // hangs with the pipe open — was the one case that never got one.
+    snapWatchdog.restart()
   }
 
   function consumeOnce(raw) {
     if (root.snapTaken === root.snapRun) return
     root.snapTaken = root.snapRun
     snapWatchdog.stop()
+    snapKill.stop()
     root.consume(raw)
+  }
+
+  // Stop trusting this run: kill the producer if it is still going, and burn
+  // the run token so no half-document renders. SIGTERM first, because a process
+  // that can tidy up should; snapKill escalates if it will not go.
+  function abortSnapshot(why) {
+    console.warn("td-paint: snapshot abandoned — " + why)
+    snapWatchdog.stop()
+    root.snapTaken = root.snapRun
+    if (snapshot.running) {
+      snapshot.signal(15)
+      snapKill.restart()
+    }
   }
 
   // keepTd: a handoff card just raised Terminal Delight's own picker — leave
@@ -401,7 +420,22 @@ BarWidget {
     // fast one, and neither failure announces itself.
     stdout: StdioCollector {
       id: snapText
-      waitForEnd: true
+      // NOT waitForEnd. Measured on Quickshell 0.3.1: with waitForEnd true the
+      // collector reports nothing at all while it fills — four seconds of a
+      // runaway producer left `text.length` at 0 — so the buffer grows inside
+      // the long-lived shell with the QML side blind to it, and a watchdog
+      // reading that buffer reads an empty string. With it false, dataChanged
+      // ticks as the data arrives, which is what makes the ceiling below
+      // enforceable against the PRODUCER rather than only against the finished
+      // document. Completeness is unaffected and was checked rather than
+      // assumed: three runs of the real oracle each delivered the whole 8.5 KB
+      // document to streamFinished, and each parsed.
+      waitForEnd: false
+      onDataChanged: {
+        if (snapText.text.length > root.stateLimit)
+          root.abortSnapshot("state passed the " + root.stateLimit
+                             + "-byte ceiling while still being written")
+      }
       onStreamFinished: root.consumeOnce(snapText.text)
     }
     // Exit is deliberately NOT the read signal: with waitForEnd the buffer can
@@ -410,24 +444,39 @@ BarWidget {
     // closing cleanly still surfaces something rather than hanging the summon.
     // qmllint disable signal-handler-parameters
     onExited: function (exitCode, exitStatus) {
-      // …unless the document already landed. Exit normally arrives AFTER the
-      // stream closes, and re-arming here fired the watchdog two seconds into
-      // every successful summon: a no-op guarded by the run token, but a log
-      // line that read like a failure on the happy path.
+      // …unless the document already landed, which is the ordinary case:
+      // streamFinished arrives before this, measured three runs out of three.
+      // The process is gone by here, so whatever the collector holds is all
+      // there will ever be — take it rather than waiting on a stream that has
+      // no writer left.
       if (root.snapTaken === root.snapRun) return
-      snapWatchdog.restart()
+      root.consumeOnce(snapText.text)
     }
     // qmllint enable signal-handler-parameters
   }
 
-  // Liveness only, never the happy path — an order of magnitude past the old
-  // wait, and cancelled the moment the drain signal lands.
+  // THE DEADLINE FOR THE WHOLE RUN, and it ends the process rather than reading
+  // around it. The old timer did neither: it was armed only after exit, so a
+  // producer that hung with the pipe open was never on a clock, and when it did
+  // fire it read the buffer and left the process running — which, for a
+  // producer that will not stop, is the shell filling up with a summon nobody
+  // is waiting on any more. Generous against what this actually costs: the real
+  // oracle answers in about 270 ms.
   Timer {
     id: snapWatchdog
-    interval: 2000
+    interval: 5000
+    onTriggered: root.abortSnapshot("no document after " + interval + " ms")
+  }
+
+  // SIGTERM is a request. This is the part that is not.
+  Timer {
+    id: snapKill
+    interval: 500
     onTriggered: {
-      console.log("td-paint: stream never closed — reading the watchdog buffer")
-      root.consumeOnce(snapText.text)
+      if (snapshot.running) {
+        console.warn("td-paint: producer ignored SIGTERM — killing it")
+        snapshot.signal(9)
+      }
     }
   }
 
