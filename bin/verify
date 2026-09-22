@@ -199,6 +199,17 @@ grep -qE 'snapshot\.signal\(' "$root/BarWidget.qml" \
   || snap_bad+="nothing ends the producer — a stalled one would be left writing"$'\n'
 grep -qE 'snapWatchdog\.restart\(\)' "$root/BarWidget.qml" \
   || snap_bad+="no deadline is armed for the run"$'\n'
+# The three lines a review found missing AFTER the first fix shipped. Each is
+# one line, and each silently undoes the fix: without the once-guard the kill
+# timer is re-armed on every chunk and never fires; without the stop() an
+# aborted run's timer kills the NEXT summon; without snapSaw a run that writes
+# nothing replays the previous run's workspace.
+grep -qE 'if \(root\.snapTaken === root\.snapRun\) return' "$root/BarWidget.qml" \
+  || snap_bad+="abortSnapshot has no once-per-run guard, so the escalation is pushed out forever"$'\n'
+grep -qE 'snapKill\.stop\(\)' "$root/BarWidget.qml" \
+  || snap_bad+="an aborted run's kill timer is not stopped, so it can kill the next summon"$'\n'
+grep -qE 'root\.snapSaw' "$root/BarWidget.qml" \
+  || snap_bad+="nothing tracks whether THIS run produced output, so an empty run replays the last one"$'\n'
 if [[ -n $snap_bad ]]; then
   err "the snapshot can outspend the shell again"
   printf '%s' "$snap_bad" | sed 's/^/    /'

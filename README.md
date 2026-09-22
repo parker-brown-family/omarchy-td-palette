@@ -99,14 +99,24 @@ gated on the collector draining rather than on a timer.
 **The oracle is not trusted to be small, or to finish.** This widget is not a
 process of its own — it runs inside the long-lived `omarchy-shell` — so an
 oracle that never stops writing spends the shell's memory rather than its own.
-The 256 KiB ceiling is therefore applied to the producer while it is still
-writing, not only to the finished document: the collector reports its length as
-it fills, and crossing the ceiling ends the process. A run that produces nothing
-at all is on a five-second deadline against a command that normally answers in
-about 270 ms, and that deadline sends `SIGTERM` and then `SIGKILL` rather than
-reading around a process it has given up on. `tests/check_snapshot_limits.qml`
-exercises both against a real runaway; `bin/verify` runs it where Quickshell is
-present and says so where it is not.
+The ceiling is therefore applied to the producer while it is still writing, not
+only to the finished document: the collector reports its length as it fills, and
+crossing the ceiling ends the process — once per run, so a producer that ignores
+`SIGTERM` still gets `SIGKILL` half a second later instead of resetting its own
+reprieve. A run that produces nothing at all is on a five-second deadline
+against a command that normally answers in about 270 ms, and a run that produces
+nothing gets nothing rather than the previous run's workspace.
+
+Two honest limits on that ceiling. Quickshell delivers in 512 KiB reads, so the
+first length the widget can ever see is already twice the 256 KiB constant: the
+enforced bound is roughly **1 MiB**, not 256 KiB, and the constant is the point
+at which the next read is refused rather than a byte-exact cap. And it counts
+UTF-16 code units, not bytes, so a document full of multibyte theme names can be
+larger still in bytes. Both are bounded and both are enormous next to the ~9 KB
+this actually produces. `tests/check_snapshot_limits.qml` exercises the ceiling,
+the escalation and the empty-run case against a producer that traps `SIGTERM`;
+`bin/verify` runs it where Quickshell is present, asserts the widget still
+carries each line the probe assumes where it is not, and says which it did.
 
 ## Requirements
 

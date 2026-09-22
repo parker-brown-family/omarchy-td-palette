@@ -95,9 +95,22 @@ BarWidget {
   property int snapRun: 0
   property int snapTaken: -1
 
+  // Whether THIS run has been written to at all. The collector clears its
+  // buffer on the first byte of a run rather than when the process starts, so
+  // a run that writes nothing still holds the previous run's document.
+  property bool snapSaw: false
+
   function paintOpen() {
     console.log("td-paint: open — snapshotting")
     root.snapRun++
+    root.snapSaw = false
+    // An escalation armed by an EARLIER run is not this run's business. It is
+    // a bare timer with no run token, and its only test is whether the shared
+    // Process is running — which, half a second after an abort, is true of the
+    // summon the user just asked for. Measured: a run that blew the ceiling
+    // left a timer that killed the next legitimate summon 500 ms later, and
+    // the picker opened on nothing.
+    snapKill.stop()
     snapshot.running = false
     snapshot.running = true
     // ARMED AT SUMMON, NOT AT EXIT. A producer that never exits and never
@@ -112,13 +125,26 @@ BarWidget {
     root.snapTaken = root.snapRun
     snapWatchdog.stop()
     snapKill.stop()
-    root.consume(raw)
+    // A run that produced nothing gets nothing, not the last run's workspace.
+    // `td-tint --state` failing — hyprctl unreachable, a bad PATH, any
+    // non-zero exit with its complaint on stderr — otherwise opened the picker
+    // over the PREVIOUS snapshot: stale tiles, stale theme, and stale Hyprland
+    // window addresses that a click would then aim `--window` at, on a handle
+    // the compositor may since have given to a different window.
+    root.consume(root.snapSaw ? raw : "")
   }
 
   // Stop trusting this run: kill the producer if it is still going, and burn
   // the run token so no half-document renders. SIGTERM first, because a process
   // that can tidy up should; snapKill escalates if it will not go.
   function abortSnapshot(why) {
+    // ONCE PER RUN. Without this the ceiling check below calls in on every
+    // chunk, and each call restarts the 500 ms escalation — so a producer that
+    // ignores SIGTERM and keeps writing pushes its own SIGKILL out forever.
+    // Measured against a producer trapping TERM: 427 aborts in 8 s, zero
+    // SIGKILLs, 15.6 MB resident and still climbing. That is the finding this
+    // whole change exists to answer, so the guard is the load-bearing line.
+    if (root.snapTaken === root.snapRun) return
     console.warn("td-paint: snapshot abandoned — " + why)
     snapWatchdog.stop()
     root.snapTaken = root.snapRun
@@ -126,6 +152,10 @@ BarWidget {
       snapshot.signal(15)
       snapKill.restart()
     }
+    // Say so. The keybinding otherwise does nothing at all, with no feedback,
+    // while every other refusal in consume() bothers to tell you why.
+    Quickshell.execDetached(["notify-send", "-a", "Terminal Paint", "-e",
+                             "Paint could not read the workspace", why])
   }
 
   // keepTd: a handoff card just raised Terminal Delight's own picker — leave
@@ -432,9 +462,10 @@ BarWidget {
       // document to streamFinished, and each parsed.
       waitForEnd: false
       onDataChanged: {
+        root.snapSaw = true
         if (snapText.text.length > root.stateLimit)
-          root.abortSnapshot("state passed the " + root.stateLimit
-                             + "-byte ceiling while still being written")
+          root.abortSnapshot("the workspace state passed its " + root.stateLimit
+                             + "-unit ceiling while still being written")
       }
       onStreamFinished: root.consumeOnce(snapText.text)
     }
