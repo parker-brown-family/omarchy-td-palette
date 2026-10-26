@@ -122,7 +122,7 @@ carries each line the probe assumes where it is not, and says which it did.
 
 - **`td-tint`** on `PATH`, current enough to report `themes` and
   `desktop_theme` from `td-tint --state` and to accept `--theme`
-  ([omarchy-terminal-delight-theme](https://github.com/parker-brown-family/omarchy-terminal-delight-theme)
+  ([omarchy-terminal-delight-tools](https://github.com/parker-brown-family/omarchy-terminal-delight-tools)
   **v0.3.0 or later** → `./install-variants.sh` installs it).
 
 If a card is the wrong colour, that repo's `./bin/doctor` says which of those
@@ -186,7 +186,8 @@ time or never.
 | Repo | What it is |
 |---|---|
 | [**terminal-delight**](https://github.com/parker-brown-family/terminal-delight) | the terminal itself — GPU-native, Rust, tiling panes, per-pane grading |
-| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the palette set, the compositor curve, and `td-tint` |
+| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the Omarchy theme — colours, wallpapers and a preview, and no code |
+| [**omarchy-terminal-delight-tools**](https://github.com/parker-brown-family/omarchy-terminal-delight-tools) | the palette set, `td-tint`, the compositor curve and the glass |
 | [**omarchy-td-palette**](https://github.com/parker-brown-family/omarchy-td-palette) | *Terminal Paint* — this repo, the 🎨 bar widget |
 
 This one is the thinnest: a single QML file that renders what `td-tint --state`
